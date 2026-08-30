@@ -68,17 +68,20 @@ to avoid pulling in `libudev`/`pkg-config` as a build dependency.
 
 ## Porting status
 
-Ported and structurally complete (pending a compiler to confirm):
+Ported and structurally complete, compiler-verified:
 
 - `vcp` data model, `backend::ddcutil` (detect/capabilities/getvcp/setvcp
   parsing), `cache` — these are pure data + text parsing, translated
   fairly mechanically from the Go originals' regexes and control flow.
 - `commands` (the async command layer), `app` (state + key/message
   handling), `components`, `screens`, `ui`, `main` — translated from
-  `model.go`/`rawview.go`/`picker.go`/the `components` package, but this is
-  the part most likely to need real fixes once it hits a compiler: some
-  ratatui API surface (`Frame`'s lifetime, `Line`/`Text` construction
-  details) was written from memory/docs, not verified against the crate.
+  `model.go`/`rawview.go`/`picker.go`/the `components` package.
+- **The Go project's test suite**, in full: all 83 tests across
+  `internal/ddc/{getvcp,capabilities,cache}_test.go` and
+  `internal/tui/{model,rawview,components/selector}_test.go` have a 1:1
+  named counterpart here (`TestUpdate_RawEditing_EscCancels` →
+  `raw_editing_esc_cancels`, etc.) — `cargo test` runs all 83. Diffed
+  function-by-function against the Go originals to confirm.
 
 Since the Go port:
 
@@ -95,12 +98,6 @@ Since the Go port:
 
 Not yet ported:
 
-- **The Go project's test suite.** Its `ddc` package tests parse fixture
-  text captured from real `ddcutil` output on real hardware; its `tui`
-  tests drive `Model.Update` with synthetic messages. Both port
-  cleanly — the *behavior* is already fully specified by the Go code and
-  tests — this just hasn't been done yet. `backend::ddcutil` has a couple
-  of smoke tests as a starting point.
 - **Raw VCP screen scrolling** is a hand-rolled offset (`app.raw_scroll`)
   rather than a proper scrollable widget — functional but unpolished
   compared to the Go original's `bubbles/viewport`.
