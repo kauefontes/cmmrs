@@ -14,10 +14,12 @@ use std::collections::{HashMap, HashSet};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
+use tachyonfx::{fx, EffectManager, Interpolation};
 
 use crate::cache;
 use crate::commands::{self, Cmd, CtrlKind, CtrlRef, Msg};
 use crate::components::{Action, Selector, Slider};
+use crate::styles;
 use crate::vcp::{Capabilities, Display, FeatureReading};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -144,6 +146,16 @@ pub struct App {
     /// testing a click there also needs `raw_table_state`'s scroll offset
     /// (already `App`'s), so this is the only extra geometry it needs.
     pub raw_table_area: Rect,
+
+    /// Shader-like frame effects (entrance/transition fades, an error
+    /// flash — see `trigger_entrance_fx`/`trigger_transition_fx`/
+    /// `trigger_error_fx`) — cross-frame render state in the same vein as
+    /// `raw_table_state`/`raw_table_area` above, so it lives here for the
+    /// same reason those do. `main.rs` drains it every frame via
+    /// `process_effects`; nothing about *what* effect runs when depends
+    /// on rendering, only *that* one was queued, which is decided here
+    /// alongside the state change that motivated it.
+    pub effects: EffectManager<()>,
 }
 
 impl App {
@@ -175,6 +187,41 @@ impl App {
 
     pub fn display_num(&self) -> i32 {
         self.current_display().map(|d| d.number).unwrap_or(0)
+    }
+
+    // ---- effects --------------------------------------------------------
+    //
+    // Kept short and "subtle and fast" on purpose (fixed ~200-300ms, one
+    // easing curve) rather than exposed as configurable — these are a
+    // finishing touch, not a feature surface.
+
+    /// The Controls screen just got real content for the first time this
+    /// scan (a fresh probe landed, or a cached one did) — fades in from
+    /// the border color rather than popping onto screen instantly.
+    fn trigger_entrance_fx(&mut self) {
+        self.effects.add_effect(fx::fade_from(
+            styles::BORDER_COLOR,
+            styles::BORDER_COLOR,
+            (250, Interpolation::QuadOut),
+        ));
+    }
+
+    /// Switched between two already-populated screens (Controls/Raw/
+    /// Picker) — same fade, just shorter, since there's no "first load"
+    /// wait backing it up.
+    fn trigger_transition_fx(&mut self) {
+        self.effects.add_effect(fx::fade_from(
+            styles::BORDER_COLOR,
+            styles::BORDER_COLOR,
+            (150, Interpolation::QuadOut),
+        ));
+    }
+
+    /// A new error just appeared (not still-being-shown — call this only
+    /// from the branch that assigns it, so it fires once per failure, not
+    /// once per render).
+    fn trigger_error_fx(&mut self) {
+        self.effects.add_effect(fx::fade_from(styles::ERR_COLOR, styles::ERR_COLOR, (200, Interpolation::QuadOut)));
     }
 
     /// Commits to controlling `displays[idx]` and (re)starts the probe for
@@ -400,6 +447,7 @@ impl App {
             KeyCode::Esc => {
                 if self.display_chosen {
                     self.screen = Screen::Controls;
+                    self.trigger_transition_fx();
                 }
                 None
             }
@@ -437,6 +485,7 @@ impl App {
             }
             KeyCode::Esc | KeyCode::Char('v') => {
                 self.screen = Screen::Controls;
+                self.trigger_transition_fx();
                 None
             }
             KeyCode::Char('r') => {
@@ -520,11 +569,13 @@ impl App {
                 if self.displays.len() > 1 {
                     self.screen = Screen::Picker;
                     self.picker_cursor = self.selected;
+                    self.trigger_transition_fx();
                 }
                 None
             }
             KeyCode::Char('v') => {
                 self.screen = Screen::Raw;
+                self.trigger_transition_fx();
                 if !self.raw_ready && !self.raw_loading {
                     if let Some(caps) = &self.caps {
                         let codes = commands::all_feature_codes(caps);
@@ -788,6 +839,9 @@ impl App {
             }
             Msg::ActionDone { result } => {
                 self.op_err = result.err().map(|e| e.to_string());
+                if self.op_err.is_some() {
+                    self.trigger_error_fx();
+                }
                 None
             }
             Msg::RawProbe(result) => {
@@ -811,6 +865,7 @@ impl App {
             }
             Err(e) => {
                 self.err = Some(e.to_string());
+                self.trigger_error_fx();
                 return None;
             }
         }
@@ -845,8 +900,12 @@ impl App {
                 self.order = ok.order;
                 self.cursor = 0;
                 self.pending.clear(); // a fresh scan's values are already live
+                self.trigger_entrance_fx();
             }
-            Err(e) => self.probe_err = Some(e.to_string()),
+            Err(e) => {
+                self.probe_err = Some(e.to_string());
+                self.trigger_error_fx();
+            }
         }
     }
 
@@ -865,6 +924,7 @@ impl App {
             .map(|s| s.code)
             .chain(self.selectors.iter().map(|s| s.code))
             .collect();
+        self.trigger_entrance_fx();
     }
 
     fn on_live_value(&mut self, code: u8, result: crate::backend::Result<FeatureReading>) {
@@ -891,6 +951,7 @@ impl App {
     fn on_set(&mut self, code: u8, value: u16, result: crate::backend::Result<()>) {
         self.op_err = result.as_ref().err().map(|e| e.to_string());
         if result.is_err() {
+            self.trigger_error_fx();
             return;
         }
         if let Some(s) = self.sliders.iter_mut().find(|s| s.code == code) {
@@ -912,7 +973,10 @@ impl App {
                 self.raw_cursor = 0;
                 self.raw_table_state = TableState::default();
             }
-            Err(e) => self.raw_err = Some(e.to_string()),
+            Err(e) => {
+                self.raw_err = Some(e.to_string());
+                self.trigger_error_fx();
+            }
         }
     }
 
@@ -937,6 +1001,7 @@ impl App {
             }
             Err(e) => {
                 self.raw_write_err = Some(e.to_string());
+                self.trigger_error_fx();
                 None
             }
         }
@@ -1435,6 +1500,60 @@ mod tests {
         })));
 
         assert!(app.pending.is_empty(), "pending must be empty after a fresh (non-cached) scan");
+    }
+
+    // ---- effects ----------------------------------------------------------
+
+    #[test]
+    fn successful_probe_triggers_entrance_effect() {
+        let mut app = App::new();
+        assert!(!app.effects.is_running(), "nothing queued yet");
+
+        app.handle_msg(Msg::Probe(Ok(commands::ProbeOk {
+            caps: Capabilities {
+                model: String::new(),
+                mccs_version: String::new(),
+                features: vec![recognized_feature(0x10, "Brightness")],
+            },
+            sliders: vec![Slider::new(0x10, "Brightness", 80, 100)],
+            selectors: Vec::new(),
+            actions: Vec::new(),
+            order: vec![CtrlRef { kind: CtrlKind::Slider, idx: 0 }],
+        })));
+
+        assert!(app.effects.is_running(), "a successful probe should queue an entrance effect");
+    }
+
+    #[test]
+    fn failed_detect_triggers_error_effect() {
+        let mut app = App::new();
+        app.handle_msg(Msg::Detect(Err(BackendError::msg("no displays"))));
+        assert!(app.effects.is_running(), "a newly-surfaced error should queue a flash effect");
+    }
+
+    #[test]
+    fn failed_set_triggers_error_effect() {
+        let mut app = app_with_slider(0x10, 50, 100);
+        app.handle_msg(Msg::Set {
+            code: 0x10,
+            value: 55,
+            result: Err(BackendError::msg("write failed")),
+        });
+        assert!(app.effects.is_running(), "a failed Set should queue a flash effect");
+    }
+
+    #[test]
+    fn switching_screens_triggers_transition_effect() {
+        let mut app = app_with_slider(0x10, 50, 100);
+        app.caps = Some(Capabilities {
+            model: String::new(),
+            mccs_version: String::new(),
+            features: vec![recognized_feature(0x10, "Brightness")],
+        });
+        assert!(!app.effects.is_running());
+
+        app.handle_key(char_key('v')); // Controls -> Raw
+        assert!(app.effects.is_running(), "switching to the Raw screen should queue a transition effect");
     }
 
     // ---- display detection / picker -------------------------------------

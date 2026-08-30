@@ -78,6 +78,15 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io
     terminal.show_cursor()
 }
 
+/// Idle poll timeout — plenty responsive for keyboard/mouse input at
+/// rest, and how often a loading spinner (see `ui::spinner`) effectively
+/// advances when nothing else is happening.
+const IDLE_POLL: Duration = Duration::from_millis(50);
+/// Poll timeout while a tachyonfx effect (`app.effects`) is actually
+/// running — shorter so a fade/flash gets enough frames to look smooth
+/// rather than choppy. Only paid while something's actually animating.
+const ANIMATING_POLL: Duration = Duration::from_millis(16);
+
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let backend = pick_backend();
     let (tx, rx) = mpsc::channel();
@@ -88,8 +97,22 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
     let mut app = App::new();
     commands::dispatch(App::init(), &backend, &tx, &worker);
 
+    let mut last_frame = std::time::Instant::now();
+
     loop {
-        terminal.draw(|f| ui::draw(f, &mut app))?;
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(last_frame);
+        last_frame = now;
+
+        terminal.draw(|f| {
+            ui::draw(f, &mut app);
+            // Effects paint *over* whatever ui::draw just rendered, so
+            // this has to run after it, in the same frame — see
+            // App::effects' docs. `area` first: `buffer_mut()` borrows
+            // `f` mutably, so it has to be the last thing taken from it.
+            let area = f.area();
+            app.effects.process_effects(elapsed.into(), f.buffer_mut(), area);
+        })?;
 
         if app.should_quit {
             break;
@@ -104,7 +127,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
             }
         }
 
-        if event::poll(Duration::from_millis(50))? {
+        let poll_timeout = if app.effects.is_running() { ANIMATING_POLL } else { IDLE_POLL };
+        if event::poll(poll_timeout)? {
             match event::read()? {
                 Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Press => {
                     if let Some(cmd) = app.handle_key(key) {
@@ -127,3 +151,4 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
 
     Ok(())
 }
+

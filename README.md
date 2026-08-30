@@ -171,6 +171,19 @@ fill the available height only once content doesn't fit, at which point it
 scrolls (keeping the focused control in view, with a scrollbar) instead of
 spilling content past the bottom border.
 
+## Look & feel
+
+The Controls screen groups its controls into named sections (`DISPLAY`,
+`COLOR`, `AUDIO`, `POWER`, `INPUT` — a section only shows up if the monitor
+actually has something in it), styled after the on-screen-display menu a
+physical monitor already has — a truecolor cyan/blue palette, a slider bar
+with rounded end caps, the focused row highlighted along its whole width
+rather than just its label. A few short (150-300ms)
+[tachyonfx](https://github.com/junkdog/tachyonfx) transitions back it up:
+a fade-in the first time a scan's controls appear, a quick fade on every
+screen switch, and a brief flash whenever an error surfaces. None of it
+is configurable — it's a finishing touch, not a feature surface.
+
 ## Logs
 
 The TUI takes over the terminal, so nothing gets printed while it's
