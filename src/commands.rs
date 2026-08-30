@@ -130,7 +130,12 @@ pub fn dispatch(cmd: Cmd, backend: &Arc<dyn DdcBackend>, tx: &Sender<Msg>, worke
 
 fn spawn_detect(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, worker: &Worker) {
     worker.submit(Box::new(move || {
-        let _ = tx.send(Msg::Detect(backend.detect()));
+        let result = backend.detect();
+        match &result {
+            Ok(displays) => log::info!("detect: found {} display(s)", displays.len()),
+            Err(e) => log::warn!("detect failed: {e}"),
+        }
+        let _ = tx.send(Msg::Detect(result));
     }));
 }
 
@@ -180,7 +185,15 @@ fn spawn_probe(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display: Display, 
 
     worker.submit(Box::new(move || {
         let result = (|| -> BackendResult<ProbeOk> {
-            let caps = backend.capabilities(display.number)?;
+            let caps = backend.capabilities(display.number).inspect_err(|e| {
+                log::warn!("probe: capabilities for display {}: {e}", display.number);
+            })?;
+            log::debug!(
+                "probe: display {} declared {} feature(s), MCCS {}",
+                display.number,
+                caps.features.len(),
+                caps.mccs_version
+            );
             // Only recognized features can ever become a control (see
             // build_controls) — no point spending a round-trip on the
             // unrecognized/manufacturer-specific codes just to discover
@@ -194,12 +207,25 @@ fn spawn_probe(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display: Display, 
 
             let mut readings = Vec::with_capacity(codes.len());
             for code in codes {
-                if let Ok(r) = backend.get_vcp(display.number, code) {
-                    readings.push(r);
+                match backend.get_vcp(display.number, code) {
+                    Ok(r) => readings.push(r),
+                    // Not fatal to the whole scan — one flaky code just
+                    // means one fewer control shows up this launch — but
+                    // silently dropping it left exactly this kind of gap
+                    // invisible, so it's worth a line.
+                    Err(e) => log::warn!("probe: getvcp {code:#04x} on display {}: {e}", display.number),
                 }
             }
 
             let (sliders, selectors, actions, order) = build_controls(&caps, &readings, None);
+            log::info!(
+                "probe: display {} → {} slider(s), {} selector(s), {} action(s) ({} unrecognized/mfg-specific)",
+                display.number,
+                sliders.len(),
+                selectors.len(),
+                actions.len(),
+                caps.features.iter().filter(|f| !f.recognized).count(),
+            );
 
             // Best-effort: a failed save just means the next launch scans
             // again.
@@ -229,6 +255,9 @@ fn spawn_probe(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display: Display, 
 fn spawn_live_value(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display_num: i32, code: u8, worker: &Worker) {
     worker.submit(Box::new(move || {
         let result = backend.get_vcp(display_num, code);
+        if let Err(e) = &result {
+            log::warn!("live value: getvcp {code:#04x} on display {display_num}: {e}");
+        }
         let _ = tx.send(Msg::LiveValue { code, result });
     }));
 }
@@ -236,6 +265,9 @@ fn spawn_live_value(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display_num: 
 fn spawn_set(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display_num: i32, code: u8, value: u16, worker: &Worker) {
     worker.submit(Box::new(move || {
         let result = backend.set_vcp(display_num, code, value, false);
+        if let Err(e) = &result {
+            log::warn!("setvcp {code:#04x}={value} on display {display_num}: {e}");
+        }
         let _ = tx.send(Msg::Set { code, value, result });
     }));
 }
@@ -247,6 +279,10 @@ fn spawn_set(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display_num: i32, co
 fn spawn_action(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display_num: i32, code: u8, worker: &Worker) {
     worker.submit(Box::new(move || {
         let result = backend.set_vcp(display_num, code, 1, false);
+        match &result {
+            Ok(()) => log::info!("action {code:#04x} fired on display {display_num}"),
+            Err(e) => log::warn!("action {code:#04x} on display {display_num}: {e}"),
+        }
         let _ = tx.send(Msg::ActionDone { result });
     }));
 }
@@ -258,8 +294,9 @@ fn spawn_raw_probe(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display_num: i
     worker.submit(Box::new(move || {
         let mut readings = Vec::with_capacity(codes.len());
         for code in codes {
-            if let Ok(r) = backend.get_vcp(display_num, code) {
-                readings.push(r);
+            match backend.get_vcp(display_num, code) {
+                Ok(r) => readings.push(r),
+                Err(e) => log::warn!("raw probe: getvcp {code:#04x} on display {display_num}: {e}"),
             }
         }
         let _ = tx.send(Msg::RawProbe(Ok(readings)));
@@ -269,6 +306,9 @@ fn spawn_raw_probe(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display_num: i
 fn spawn_raw_single_probe(backend: Arc<dyn DdcBackend>, tx: Sender<Msg>, display_num: i32, code: u8, worker: &Worker) {
     worker.submit(Box::new(move || {
         let result = backend.get_vcp(display_num, code);
+        if let Err(e) = &result {
+            log::debug!("raw single probe: getvcp {code:#04x} on display {display_num}: {e}");
+        }
         let _ = tx.send(Msg::RawSingleProbe { code, result });
     }));
 }
@@ -287,6 +327,9 @@ fn spawn_raw_set(
 ) {
     worker.submit(Box::new(move || {
         let result = backend.set_vcp(display_num, code, value, permit_unknown);
+        if let Err(e) = &result {
+            log::warn!("raw setvcp {code:#04x}={value} on display {display_num}: {e}");
+        }
         let _ = tx.send(Msg::RawSet { code, result });
     }));
 }

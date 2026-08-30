@@ -65,6 +65,7 @@ dependencies = [
  "ddc-i2c",
  "dirs",
  "edid",
+ "log",
  "mccs",
  "mccs-caps",
  "mccs-db",

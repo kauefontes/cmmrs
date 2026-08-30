@@ -3,6 +3,7 @@ mod backend;
 mod cache;
 mod commands;
 mod components;
+mod logging;
 mod screens;
 mod styles;
 mod ui;
@@ -26,6 +27,8 @@ use backend::DdcBackend;
 use worker::Worker;
 
 fn main() -> io::Result<()> {
+    logging::init();
+
     let mut terminal = setup_terminal()?;
 
     let result = run(&mut terminal);
@@ -33,9 +36,11 @@ fn main() -> io::Result<()> {
     restore_terminal(&mut terminal)?;
 
     if let Err(e) = result {
+        log::error!("fatal: {e}");
         eprintln!("error: {e}");
         std::process::exit(1);
     }
+    log::info!("cmmrs exiting normally");
     Ok(())
 }
 
@@ -47,11 +52,15 @@ fn pick_backend() -> Arc<dyn DdcBackend> {
     {
         let native = backend::native::NativeBackend::new();
         match native.detect() {
-            Ok(displays) if !displays.is_empty() => return Arc::new(native),
-            Ok(_) => {}
-            Err(e) => eprintln!("native DDC/CI backend unavailable, falling back to ddcutil: {e}"),
+            Ok(displays) if !displays.is_empty() => {
+                log::info!("using native DDC/CI backend ({} display(s) found)", displays.len());
+                return Arc::new(native);
+            }
+            Ok(_) => log::info!("native DDC/CI backend found no displays, falling back to ddcutil"),
+            Err(e) => log::warn!("native DDC/CI backend unavailable, falling back to ddcutil: {e}"),
         }
     }
+    log::info!("using ddcutil backend");
     Arc::new(DdcutilBackend::new())
 }
 

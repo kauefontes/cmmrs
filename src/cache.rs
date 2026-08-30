@@ -60,6 +60,14 @@ fn cache_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
+/// Where `logging` writes its file — same directory as the monitor
+/// caches, since both are "app data `cmmrs` would rather not lose but
+/// nothing breaks if it does" (a fresh scan replaces the former, a
+/// missing log just means no history).
+pub fn log_path() -> Option<PathBuf> {
+    Some(cache_dir()?.join("cmmrs.log"))
+}
+
 /// Identifies a monitor by manufacturer + model, which is what discovery
 /// gives us from the EDID. Two monitors of the same model sharing a cache
 /// entry is harmless — they have identical capabilities by definition.
@@ -88,9 +96,30 @@ fn cache_path(mfg_id: &str, model: &str) -> Option<PathBuf> {
 /// triggers a fresh scan.
 pub fn load(mfg_id: &str, model: &str) -> Option<MonitorCache> {
     let path = cache_path(mfg_id, model)?;
-    let data = std::fs::read_to_string(path).ok()?;
-    let cache: MonitorCache = serde_json::from_str(&data).ok()?;
+    let data = match std::fs::read_to_string(&path) {
+        Ok(data) => data,
+        // Missing is the overwhelmingly common case (first launch for
+        // this monitor) and not worth a log line; anything else reading
+        // an existing file is unexpected and worth knowing about.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            log::warn!("cache: couldn't read {}: {e}", path.display());
+            return None;
+        }
+    };
+    let cache: MonitorCache = match serde_json::from_str(&data) {
+        Ok(cache) => cache,
+        Err(e) => {
+            log::warn!("cache: couldn't parse {}: {e}", path.display());
+            return None;
+        }
+    };
     if cache.version != CACHE_VERSION {
+        log::debug!(
+            "cache: {} is version {} (current is {CACHE_VERSION}), treating as a miss",
+            path.display(),
+            cache.version
+        );
         return None;
     }
     Some(cache)
@@ -103,7 +132,13 @@ pub fn save(mfg_id: &str, model: &str, mut cache: MonitorCache) -> std::io::Resu
         .ok_or_else(|| std::io::Error::other("no cache directory available"))?;
     cache.version = CACHE_VERSION;
     let data = serde_json::to_string_pretty(&cache)?;
-    std::fs::write(path, data)
+    match std::fs::write(&path, data) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            log::warn!("cache: couldn't write {}: {e}", path.display());
+            Err(e)
+        }
+    }
 }
 
 /// Removes a cached scan, forcing the next load to rediscover everything

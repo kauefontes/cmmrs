@@ -18,6 +18,11 @@ serde_json = "1"
 regex = "1"
 dirs = "5"
 thiserror = "1"
+# Just the facade (log::info!/warn!/etc as no-ops until a logger is
+# installed) — the logger itself is hand-rolled in `logging.rs` rather
+# than pulling in env_logger/simplelog/etc, all of which default to
+# stderr, which is unusable here (see that module's docs).
+log = { version = "0.4", features = ["std"] }
 
 # Native DDC/CI backend deps, one block per OS as each lands (see
 # backend/mod.rs) — Linux first, via /dev/i2c-* directly. We do our own

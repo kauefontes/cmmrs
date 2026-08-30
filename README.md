@@ -143,3 +143,20 @@ Same as the Go original:
 Inside the Raw VCP screen: `↑↓`/`j`/`k` move the focused row, `f`/`pgdn`
 and `b`/`pgup` page, `e` edits the focused row's value, `r` rescans, `esc`/`v`
 goes back.
+
+## Logs
+
+The TUI takes over the terminal, so nothing gets printed while it's
+running — everything (backend selection, scan/probe results, DDC read/write
+failures, cache hits/misses) goes to a log file instead:
+`$XDG_CACHE_HOME/cmmrs/cmmrs.log` (`~/.cache/cmmrs/cmmrs.log` by default).
+It's capped at 5 MB and starts over past that — a debugging aid, not an
+audit trail.
+
+Defaults to `info`; set `RUST_LOG=debug` (or `trace`) for more detail, e.g.
+when tracking down why a control isn't showing up:
+
+```bash
+RUST_LOG=debug ./target/release/cmmrs
+tail -f ~/.cache/cmmrs/cmmrs.log   # in another terminal
+```
