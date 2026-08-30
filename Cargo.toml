@@ -2,7 +2,7 @@
 name = "cmmrs"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 description = "control-my-monitor — a terminal UI for controlling DDC/CI monitors, vendor-agnostic."
 license = "MIT"
 
@@ -11,8 +11,17 @@ name = "cmmrs"
 path = "src/main.rs"
 
 [dependencies]
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = "0.30"
+# Matches the version ratatui 0.30's own CrosstermBackend pulls in
+# internally (ratatui-crossterm) — without this pin, cargo happily
+# builds two separate crossterm versions side by side (0.28 for us,
+# 0.29 for ratatui's internals), which still compiles since the two
+# never exchange typed values, but is needless duplication.
+crossterm = "0.29"
+# Shader-like frame effects (fade/sweep/flash) — see ui.rs. Needs
+# ratatui 0.30+: its production code depends on ratatui-core, which is
+# only type-compatible with the ratatui crate from that split onward.
+tachyonfx = "0.25"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
