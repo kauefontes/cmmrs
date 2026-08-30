@@ -1,10 +1,14 @@
-# vcpctl
+# cmmrs
 
-A terminal UI for controlling DDC/CI monitors — any vendor, any monitor
-that speaks MCCS. Rust port of a prior Go project
+**c**ontrol-**m**y-**m**onitor, in **r**u**s**t. A terminal UI for
+controlling DDC/CI monitors — any vendor, any monitor that speaks MCCS.
+Rust port of a prior Go project
 ([`lg-control-tui`](../../go/lg-control-tui)) that was accidentally named
 after the one monitor it was built against, even though nothing about it
-was ever LG-specific.
+was ever LG-specific — a mistake this name is deliberately built to not
+repeat (it was originally called `vcpctl`, after the DDC/CI protocol
+jargon "VCP", which is exactly as unfriendly as it sounds to anyone who
+hasn't read the MCCS spec).
 
 The point of this tool: everything a monitor exposes over DDC/CI —
 brightness, contrast, RGB gain, input source, color presets, power mode,
@@ -117,7 +121,7 @@ bus) or on a platform without a native backend yet.
 
 ```bash
 cargo build --release
-./target/release/vcpctl
+./target/release/cmmrs
 ```
 
 ## Keybindings

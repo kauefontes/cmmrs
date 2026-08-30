@@ -55,7 +55,7 @@ pub struct MonitorCache {
 }
 
 fn cache_dir() -> Option<PathBuf> {
-    let dir = dirs::cache_dir()?.join("vcpctl");
+    let dir = dirs::cache_dir()?.join("cmmrs");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
@@ -141,7 +141,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("vcpctl-test-{}-{n}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("cmmrs-test-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create temp cache dir");
 
         // SAFETY: serialized by ENV_LOCK above — no other thread in this

@@ -1,13 +1,13 @@
 [package]
-name = "vcpctl"
+name = "cmmrs"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
-description = "A terminal UI for controlling DDC/CI monitors, vendor-agnostic."
+description = "control-my-monitor — a terminal UI for controlling DDC/CI monitors, vendor-agnostic."
 license = "MIT"
 
 [[bin]]
-name = "vcpctl"
+name = "cmmrs"
 path = "src/main.rs"
 
 [dependencies]
