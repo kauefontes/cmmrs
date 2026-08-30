@@ -4,6 +4,7 @@ mod cache;
 mod categories;
 mod commands;
 mod components;
+mod effects;
 mod logging;
 mod screens;
 mod styles;
@@ -86,6 +87,17 @@ const IDLE_POLL: Duration = Duration::from_millis(50);
 /// running — shorter so a fade/flash gets enough frames to look smooth
 /// rather than choppy. Only paid while something's actually animating.
 const ANIMATING_POLL: Duration = Duration::from_millis(16);
+/// Ceiling on the `elapsed` duration ever fed to `process_effects` in one
+/// step. Without this, the first frame after triggering an effect — say,
+/// a screen switch — advances it by however long the app sat idle
+/// *waiting for the keypress that triggered it*, not by an actual frame
+/// interval: a user pausing a second before pressing `v` would hand a
+/// ~250ms transition effect a single ~1000ms step, which finishes it
+/// before it's ever had a second frame to animate across — reading as a
+/// flash, not a transition. Capping each step at this (comfortably above
+/// `ANIMATING_POLL`) keeps every effect's first real step small no matter
+/// how long the app was idle beforehand.
+const MAX_EFFECT_STEP: Duration = Duration::from_millis(33);
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let backend = pick_backend();
@@ -101,7 +113,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
 
     loop {
         let now = std::time::Instant::now();
-        let elapsed = now.duration_since(last_frame);
+        let elapsed = now.duration_since(last_frame).min(MAX_EFFECT_STEP);
         last_frame = now;
 
         terminal.draw(|f| {
@@ -152,3 +164,79 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> 
     Ok(())
 }
 
+
+/// End-to-end effect tests exercising the real pipeline this module's
+/// `run()` drives (App queues an effect -> process_effects renders it
+/// into a real buffer over several frames), rather than just checking
+/// `App::effects.is_running()` flips true (already covered in
+/// `app.rs`'s own test suite). Each test here pins down one thing that
+/// was visibly wrong before this module's `MAX_EFFECT_STEP` fix and
+/// `effects::materialize` effect landed.
+#[cfg(test)]
+mod effects_integration_tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    fn app_with_content() -> App {
+        let mut app = App::new();
+        app.loading = false;
+        app.displays = vec![crate::vcp::Display { number: 1, mfg_id: "GSM".into(), model: "LG ULTRAWIDE".into(), ..Default::default() }];
+        app.caps = Some(crate::vcp::Capabilities { model: String::new(), mccs_version: "2.1".into(), features: vec![] });
+        app
+    }
+
+    #[test]
+    fn materialize_shows_noise_then_resolves_to_real_text() {
+        let mut app = app_with_content();
+        app.handle_msg(commands::Msg::Probe(Ok(commands::ProbeOk {
+            caps: crate::vcp::Capabilities { model: String::new(), mccs_version: "2.1".into(), features: vec![] },
+            sliders: vec![], selectors: vec![], actions: vec![],
+            order: vec![],
+        })));
+        assert!(app.effects.is_running());
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        let mut saw_noise = false;
+        for _ in 0..30 {
+            terminal.draw(|f| {
+                ui::draw(f, &mut app);
+                let area = f.area();
+                app.effects.process_effects(std::time::Duration::from_millis(16).into(), f.buffer_mut(), area);
+            }).unwrap();
+            let buf = terminal.backend().buffer().clone();
+            let row2: String = (0..40).map(|x| buf[(x, 2)].symbol().to_string()).collect();
+            if row2.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)) {
+                saw_noise = true;
+            }
+        }
+        assert!(saw_noise, "expected braille noise glyphs during the animation");
+        assert!(!app.effects.is_running(), "effect should have completed");
+
+        let buf = terminal.backend().buffer().clone();
+        let final_row2: String = (0..40).map(|x| buf[(x, 2)].symbol().to_string()).collect();
+        assert!(!final_row2.chars().any(|c| ('\u{2801}'..='\u{28ff}').contains(&c)), "no noise glyphs should remain after completion: {final_row2:?}");
+    }
+
+    #[test]
+    fn a_long_idle_gap_does_not_finish_the_effect_in_one_frame() {
+        let mut app = app_with_content();
+        app.handle_msg(commands::Msg::Probe(Ok(commands::ProbeOk {
+            caps: crate::vcp::Capabilities { model: String::new(), mccs_version: "2.1".into(), features: vec![] },
+            sliders: vec![], selectors: vec![], actions: vec![],
+            order: vec![],
+        })));
+
+        let mut terminal = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        // Simulate exactly what a 1.5s idle gap before the triggering
+        // keypress would otherwise hand process_effects, clamped the
+        // same way main's loop clamps it.
+        let elapsed = std::time::Duration::from_millis(1500).min(MAX_EFFECT_STEP);
+        terminal.draw(|f| {
+            ui::draw(f, &mut app);
+            let area = f.area();
+            app.effects.process_effects(elapsed.into(), f.buffer_mut(), area);
+        }).unwrap();
+
+        assert!(app.effects.is_running(), "a clamped step from a long idle gap must not finish the effect in one frame");
+    }
+}

@@ -178,11 +178,13 @@ The Controls screen groups its controls into named sections (`DISPLAY`,
 actually has something in it), styled after the on-screen-display menu a
 physical monitor already has — a truecolor cyan/blue palette, a slider bar
 with rounded end caps, the focused row highlighted along its whole width
-rather than just its label. A few short (150-300ms)
-[tachyonfx](https://github.com/junkdog/tachyonfx) transitions back it up:
-a fade-in the first time a scan's controls appear, a quick fade on every
-screen switch, and a brief flash whenever an error surfaces. None of it
-is configurable — it's a finishing touch, not a feature surface.
+rather than just its label. [tachyonfx](https://github.com/junkdog/tachyonfx)
+backs a few short, cell-by-cell "materialize" transitions — content decodes
+in from random Braille noise (`⠋⠙⠹...`, terminal-hacker style, not a flat
+color wash) the first time a scan's controls appear (~400ms) and on every
+screen switch (~250ms), plus a brief color flash whenever an error
+surfaces. None of it is configurable — it's a finishing touch, not a
+feature surface.
 
 ## Logs
 

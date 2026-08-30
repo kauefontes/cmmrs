@@ -19,6 +19,7 @@ use tachyonfx::{fx, EffectManager, Interpolation};
 use crate::cache;
 use crate::commands::{self, Cmd, CtrlKind, CtrlRef, Msg};
 use crate::components::{Action, Selector, Slider};
+use crate::effects;
 use crate::styles;
 use crate::vcp::{Capabilities, Display, FeatureReading};
 
@@ -196,25 +197,18 @@ impl App {
     // finishing touch, not a feature surface.
 
     /// The Controls screen just got real content for the first time this
-    /// scan (a fresh probe landed, or a cached one did) — fades in from
-    /// the border color rather than popping onto screen instantly.
+    /// scan (a fresh probe landed, or a cached one did) — materializes in
+    /// cell by cell (see `effects::materialize`) rather than popping onto
+    /// screen instantly.
     fn trigger_entrance_fx(&mut self) {
-        self.effects.add_effect(fx::fade_from(
-            styles::BORDER_COLOR,
-            styles::BORDER_COLOR,
-            (250, Interpolation::QuadOut),
-        ));
+        self.effects.add_effect(effects::materialize((400, Interpolation::Linear)));
     }
 
     /// Switched between two already-populated screens (Controls/Raw/
-    /// Picker) — same fade, just shorter, since there's no "first load"
-    /// wait backing it up.
+    /// Picker) — same materialize effect, just shorter, since there's no
+    /// "first load" wait backing it up.
     fn trigger_transition_fx(&mut self) {
-        self.effects.add_effect(fx::fade_from(
-            styles::BORDER_COLOR,
-            styles::BORDER_COLOR,
-            (150, Interpolation::QuadOut),
-        ));
+        self.effects.add_effect(effects::materialize((250, Interpolation::Linear)));
     }
 
     /// A new error just appeared (not still-being-shown — call this only
