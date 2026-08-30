@@ -6,6 +6,9 @@
 //! table is the one exception — it needs a real `Rect` to render a
 //! stateful `Table` widget into, so it draws itself (see `screens::raw`).
 
+use std::sync::LazyLock;
+use std::time::Instant;
+
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::text::{Line, Text};
 use ratatui::widgets::{
@@ -18,6 +21,21 @@ use crate::screens;
 use crate::styles;
 
 pub const TITLE: &str = "CMMRS";
+
+/// A braille spinner frame for a loading line ("Detecting monitors...",
+/// "Reading VCP features...", "Scanning all VCP codes..."). Phased by
+/// wall-clock elapsed time rather than a redraw counter, so its speed
+/// doesn't depend on how often the app happens to redraw (idle vs. mid-
+/// animation poll intervals differ — see `main.rs`) — same `LazyLock`-
+/// for-one-time-setup pattern `backend::ddcutil` already uses for its
+/// regexes, just timing instead of parsing.
+pub fn spinner() -> char {
+    static START: LazyLock<Instant> = LazyLock::new(Instant::now);
+    const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    const FRAME_MS: u128 = 80;
+    let step = (START.elapsed().as_millis() / FRAME_MS) as usize;
+    FRAMES[step % FRAMES.len()]
+}
 
 /// Rows `render_box` always reserves around/above the scrollable body it's
 /// handed: the top and bottom border (2), the block's top and bottom
@@ -173,6 +191,14 @@ mod tests {
     use crate::components::Slider;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+
+    #[test]
+    fn spinner_never_panics_and_stays_within_its_frame_set() {
+        const FRAMES: &str = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+        for _ in 0..5 {
+            assert!(FRAMES.contains(spinner()));
+        }
+    }
 
     /// A Controls screen with `n` sliders — enough to reproduce "way more
     /// controls than a short terminal has rows for" (see the bug report

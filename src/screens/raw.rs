@@ -68,7 +68,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
             ),
             Line::raw(""),
             Line::styled(
-                "Scanning all VCP codes — this takes a few seconds...",
+                format!("{} Scanning all VCP codes — this takes a few seconds...", ui::spinner()),
                 styles::dim(),
             ),
         ];

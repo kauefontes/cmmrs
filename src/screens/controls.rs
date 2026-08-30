@@ -36,7 +36,7 @@ fn body_lines(app: &App) -> (Vec<Line<'static>>, Vec<Option<ClickTarget>>) {
     let mut targets = Vec::new();
 
     if app.loading {
-        lines.push(Line::styled("Detecting monitors...", styles::dim()));
+        lines.push(Line::styled(format!("{} Detecting monitors...", crate::ui::spinner()), styles::dim()));
         targets.push(None);
         return (lines, targets);
     }
@@ -84,7 +84,7 @@ fn body_lines(app: &App) -> (Vec<Line<'static>>, Vec<Option<ClickTarget>>) {
     targets.push(None);
 
     if app.probing {
-        lines.push(Line::styled("Reading VCP features...", styles::dim()));
+        lines.push(Line::styled(format!("{} Reading VCP features...", crate::ui::spinner()), styles::dim()));
         targets.push(None);
         return (lines, targets);
     }
