@@ -523,4 +523,47 @@ mod live_probe {
             }
         }
     }
+
+    /// End-to-end check of `commands::spawn_probe`'s real cache-miss path
+    /// (worker thread, channel, `build_controls`, `cache::save`) against
+    /// live hardware — the actual thing `main`'s loop drives, not just
+    /// the backend call in isolation.
+    #[test]
+    #[ignore]
+    fn manual_probe_classifies_mute_as_selector_not_slider() {
+        use crate::commands::{self, Cmd};
+        use crate::worker::Worker;
+        use std::sync::mpsc;
+        use std::sync::Arc;
+
+        let backend: Arc<dyn crate::backend::DdcBackend> = Arc::new(NativeBackend::new());
+        let displays = backend.detect().expect("detect failed");
+        let d = displays.first().expect("expected at least one display");
+        let _ = crate::cache::clear(&d.mfg_id, &d.model);
+
+        let (tx, rx) = mpsc::channel();
+        let worker = Worker::new();
+        commands::dispatch(Cmd::Probe(d.clone()), &backend, &tx, &worker);
+
+        let msg = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("probe result");
+        let commands::Msg::Probe(Ok(ok)) = msg else {
+            panic!("expected a successful Probe result");
+        };
+        eprintln!(
+            "sliders: {:?}",
+            ok.sliders.iter().map(|s| s.code).collect::<Vec<_>>()
+        );
+        eprintln!(
+            "selectors: {:?}",
+            ok.selectors.iter().map(|s| s.code).collect::<Vec<_>>()
+        );
+        assert!(
+            ok.selectors.iter().any(|s| s.code == 0x8d),
+            "Audio Mute (0x8d) should be a selector"
+        );
+        assert!(
+            !ok.sliders.iter().any(|s| s.code == 0x8d),
+            "Audio Mute (0x8d) should not be a slider"
+        );
+    }
 }

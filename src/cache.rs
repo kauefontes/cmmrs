@@ -12,8 +12,15 @@ use crate::vcp::Capabilities;
 /// match — serde ignores unknown/missing fields by default (with `#[serde
 /// (default)]`), so a renamed field would otherwise load "successfully"
 /// with data quietly missing instead of falling back to a fresh scan. Bump
-/// this whenever `MonitorCache`'s shape changes.
-const CACHE_VERSION: u32 = 1;
+/// this whenever `MonitorCache`'s shape changes, *and* whenever backend
+/// logic that decides a code's classification changes (slider vs.
+/// selector vs. action) — the shape stays identical but a code already
+/// baked into the wrong bucket (e.g. `native`'s well-known-fallback fix
+/// misclassifying Audio Mute as a slider before it existed) would
+/// otherwise sit there, silently wrong, until someone thinks to hit `R`.
+///
+/// Bumped to 2 for the native backend's Audio-Mute-was-a-slider fix.
+const CACHE_VERSION: u32 = 2;
 
 /// Enough to skip rediscovering a continuous feature: its code, max value,
 /// and last known current value. `value` is what's shown immediately on
