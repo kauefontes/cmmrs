@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    # Linux only for now — the only platform with a native backend (see
+    # backend/native.rs); ddcutil.rs's own tests are pure text-parsing
+    # fixtures and don't need ddcutil actually installed to run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --all-targets
+      # #[ignore]d — manual_detect_probe, manual_probe_classifies_mute...
+      # — need real DDC/CI hardware and stay skipped here by default.
+      - name: Test
+        run: cargo test
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings

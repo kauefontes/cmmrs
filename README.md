@@ -2,25 +2,26 @@
 
 **c**ontrol-**m**y-**m**onitor, in **r**u**s**t. A terminal UI for
 controlling DDC/CI monitors — any vendor, any monitor that speaks MCCS.
-Rust port of a prior Go project
-([`lg-control-tui`](../../go/lg-control-tui)) that was accidentally named
-after the one monitor it was built against, even though nothing about it
-was ever LG-specific — a mistake this name is deliberately built to not
-repeat (it was originally called `vcpctl`, after the DDC/CI protocol
-jargon "VCP", which is exactly as unfriendly as it sounds to anyone who
-hasn't read the MCCS spec).
+Rust port of a prior Go project (`lg-control-tui`) that was accidentally
+named after the one monitor it was built against, even though nothing
+about it was ever LG-specific — a mistake this name is deliberately built
+to not repeat (it was originally called `vcpctl`, after the DDC/CI
+protocol jargon "VCP", which is exactly as unfriendly as it sounds to
+anyone who hasn't read the MCCS spec).
 
 The point of this tool: everything a monitor exposes over DDC/CI —
 brightness, contrast, RGB gain, input source, color presets, power mode,
 speaker volume, whatever a given panel happens to have — controllable from
-a keyboard-driven TUI, without diving into an OSD menu with a joystick
-button to find it.
+a keyboard-driven TUI (mouse too — see "Mouse" below), without diving into
+an OSD menu with a joystick button to find it.
 
-**Status: builds, all 83 ported tests pass, and it's been run against real
+**Status: builds, 126 tests pass, and it's been run against real
 hardware** (an LG ultrawide over native `/dev/i2c-2` — see "Porting
 status"). Started as a file-by-file hand translation from the Go original;
 the ratatui API surface details that translation had to guess at are now
-verified against the compiler, not just written from memory.
+verified against the compiler, not just written from memory. Grown well
+past a straight port since — native-backend fixes, mouse support, a
+visual redesign, file-backed logging — all covered by tests of their own.
 
 ## Architecture
 
@@ -85,12 +86,14 @@ Ported and structurally complete, compiler-verified:
 - `commands` (the async command layer), `app` (state + key/message
   handling), `components`, `screens`, `ui`, `main` — translated from
   `model.go`/`rawview.go`/`picker.go`/the `components` package.
-- **The Go project's test suite**, in full: all 83 tests across
-  `internal/ddc/{getvcp,capabilities,cache}_test.go` and
+- **The Go project's test suite**, in full: all 83 of its original tests
+  across `internal/ddc/{getvcp,capabilities,cache}_test.go` and
   `internal/tui/{model,rawview,components/selector}_test.go` have a 1:1
   named counterpart here (`TestUpdate_RawEditing_EscCancels` →
-  `raw_editing_esc_cancels`, etc.) — `cargo test` runs all 83. Diffed
-  function-by-function against the Go originals to confirm.
+  `raw_editing_esc_cancels`, etc.), diffed function-by-function against
+  the Go originals to confirm. `cargo test` runs 126 in total now — the
+  other 43 came with everything added since (mouse, the native-backend
+  fixes, the visual redesign, logging).
 
 Since the Go port:
 
@@ -202,3 +205,7 @@ when tracking down why a control isn't showing up:
 RUST_LOG=debug ./target/release/cmmrs
 tail -f ~/.cache/cmmrs/cmmrs.log   # in another terminal
 ```
+
+## License
+
+[MIT](LICENSE)
