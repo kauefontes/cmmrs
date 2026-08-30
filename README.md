@@ -12,9 +12,11 @@ speaker volume, whatever a given panel happens to have — controllable from
 a keyboard-driven TUI, without diving into an OSD menu with a joystick
 button to find it.
 
-**Status: skeleton / early port, not yet built or run.** This was
-translated file-by-file from the Go original by hand; expect the first
-`cargo build` to need a few fixes. See "Porting status" below.
+**Status: builds, all 83 ported tests pass, and it's been run against real
+hardware** (an LG ultrawide over native `/dev/i2c-2` — see "Porting
+status"). Started as a file-by-file hand translation from the Go original;
+the ratatui API surface details that translation had to guess at are now
+verified against the compiler, not just written from memory.
 
 ## Architecture
 
@@ -23,9 +25,12 @@ src/
 ├── main.rs         — terminal setup/teardown, the event loop
 ├── app.rs           — application state + update logic (the Elm-style Model)
 ├── ui.rs             — top-level render dispatch, shared box chrome
-├── commands.rs        — async work: spawns a thread per backend call, reports back via mpsc
-├── vcp.rs              — backend-agnostic data model (Display, Capabilities, VcpFeature, FeatureReading)
-├── cache.rs             — on-disk, versioned scan cache
+├── commands.rs        — async work: describes/dispatches backend calls, reports back via mpsc
+├── worker.rs           — single background thread that runs those calls one at a time
+├── vcp.rs                — backend-agnostic data model (Display, Capabilities, VcpFeature, FeatureReading)
+├── cache.rs               — on-disk, versioned scan cache, keyed by mfg_id+model — backend-agnostic,
+│                             so a monitor scanned once via ddcutil is still a cache hit under the
+│                             native backend and vice versa
 ├── backend/
 │   ├── mod.rs            — the DdcBackend trait — the seam for going native (see below)
 │   ├── ddcutil.rs          — shells out to `ddcutil`, parses its text output
@@ -96,13 +101,11 @@ Since the Go port:
   automatically; run it with `cargo test -- --ignored --nocapture` on a
   machine with a DDC/CI monitor attached.
 
-Not yet ported:
+Left to do:
 
-- **Raw VCP screen scrolling** is a hand-rolled offset (`app.raw_scroll`)
-  rather than a proper scrollable widget — functional but unpolished
-  compared to the Go original's `bubbles/viewport`.
 - Other vendors are supported in principle (the model was never
   LG-specific) but only exercised against one panel so far.
+- Windows and macOS native backends (see "Why port this from Go at all").
 
 ## Build & run
 
