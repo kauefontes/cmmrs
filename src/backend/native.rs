@@ -122,25 +122,45 @@ fn detect(slot: &Mutex<Vec<Entry>>) -> Result<Vec<Display>> {
     let mut found = Vec::new();
     for dir_entry in dir_entries {
         let path = dir_entry.path();
-        let Ok(mut handle) = ddc_i2c::from_i2c_device(&path) else {
-            continue;
+        let mut handle = match ddc_i2c::from_i2c_device(&path) {
+            Ok(h) => h,
+            // The single most common reason this fails on Linux is the
+            // calling user not being in the `i2c` group — worth a line,
+            // since "native backend found 0 displays" alone gives no clue
+            // why.
+            Err(e) => {
+                log::debug!("native detect: couldn't open {}: {e}", path.display());
+                continue;
+            }
         };
-        let Ok(version) = handle.get_vcp_feature(0xdf) else {
-            continue;
+        let version = match handle.get_vcp_feature(0xdf) {
+            Ok(v) => v,
+            // Expected and common: most /dev/i2c-* nodes aren't a DDC/CI
+            // monitor at all (GPU internals, SMBus, ...), so this alone
+            // isn't warn-worthy, just useful when tracing why a bus was
+            // skipped.
+            Err(e) => {
+                log::debug!("native detect: {} didn't answer getvcp 0xdf, skipping: {e}", path.display());
+                continue;
+            }
         };
 
         let mut mfg_id = String::new();
         let mut model = String::new();
         let mut edid_buf = vec![0u8; 0x80];
-        if handle.read_edid(0, &mut edid_buf).is_ok() {
-            if let Ok(edid) = edid::parse(&edid_buf).to_result() {
-                mfg_id = edid.header.vendor.iter().collect();
-                for desc in &edid.descriptors {
-                    if let edid::Descriptor::ProductName(name) = desc {
-                        model = name.clone();
+        match handle.read_edid(0, &mut edid_buf) {
+            Ok(_) => match edid::parse(&edid_buf).to_result() {
+                Ok(edid) => {
+                    mfg_id = edid.header.vendor.iter().collect();
+                    for desc in &edid.descriptors {
+                        if let edid::Descriptor::ProductName(name) = desc {
+                            model = name.clone();
+                        }
                     }
                 }
-            }
+                Err(e) => log::debug!("native detect: {} EDID didn't parse: {e:?}", path.display()),
+            },
+            Err(e) => log::debug!("native detect: {} EDID read failed: {e}", path.display()),
         }
 
         let parsed_version = mccs::Version::new(version.sh, version.sl);
