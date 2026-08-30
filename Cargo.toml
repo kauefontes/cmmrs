@@ -5,6 +5,11 @@ edition = "2021"
 rust-version = "1.88"
 description = "control-my-monitor — a terminal UI for controlling DDC/CI monitors, vendor-agnostic."
 license = "MIT"
+repository = "https://github.com/kauefontes/cmmrs"
+homepage = "https://github.com/kauefontes/cmmrs"
+readme = "README.md"
+keywords = ["ddc", "ddcutil", "monitor", "tui", "brightness"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "cmmrs"
