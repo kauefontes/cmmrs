@@ -1,0 +1,37 @@
+[package]
+name = "vcpctl"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "A terminal UI for controlling DDC/CI monitors, vendor-agnostic."
+license = "MIT"
+
+[[bin]]
+name = "vcpctl"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+dirs = "5"
+thiserror = "1"
+
+# Native DDC/CI backend deps, one block per OS as each lands (see
+# backend/mod.rs) — Linux first, via /dev/i2c-* directly. We do our own
+# `/dev/i2c-*` enumeration (backend::native) rather than pulling in
+# ddc-i2c's `with-linux-enumerate`, so we skip its libudev/pkg-config build
+# dependency entirely.
+[target.'cfg(target_os = "linux")'.dependencies]
+ddc = "0.2.2"
+ddc-i2c = { version = "0.2.2", features = ["with-linux"] }
+edid = "0.3"
+mccs = "0.1.3"
+mccs-caps = "0.1.3"
+mccs-db = "0.1.3"
+
+[profile.release]
+lto = true
+strip = true
