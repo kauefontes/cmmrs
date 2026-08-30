@@ -1,6 +1,7 @@
 mod app;
 mod backend;
 mod cache;
+mod categories;
 mod commands;
 mod components;
 mod logging;

@@ -17,9 +17,14 @@ impl Action {
         } else {
             ("  ", styles::name())
         };
-        Line::from(vec![
+        let line = Line::from(vec![
             Span::raw(cursor),
             Span::styled(format!("[ {} ]", self.name), style),
-        ])
+        ]);
+        if focused {
+            styles::with_focus_bg(line)
+        } else {
+            line
+        }
     }
 }

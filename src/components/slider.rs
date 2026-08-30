@@ -1,17 +1,18 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
+use crate::components::{truncate_name, NAME_WIDTH};
 use crate::styles;
 
 const BAR_WIDTH: usize = 20;
 
 /// Column offset, within this control's own rendered line, where the
 /// bar's fill characters start — the cursor marker (`"▸ "`/`"  "`, 2
-/// cols) + the name field (`{:<18}`, 18 cols) + `" ["` (2 cols) in
+/// cols) + the name field (`{:<NAME_WIDTH}`) + `" ▐"` (2 cols) in
 /// `view()`. Kept here, right next to `BAR_WIDTH`, specifically so a
 /// layout tweak to `view()` can't silently desync it from
 /// `value_at_column` — if you change one, the other is right there.
-const BAR_START_COL: u16 = 22;
+const BAR_START_COL: u16 = 2 + NAME_WIDTH as u16 + 2;
 
 /// A continuous (0..max) VCP control rendered as a bar, e.g. Brightness,
 /// Contrast, RGB gain, Volume.
@@ -43,7 +44,10 @@ impl Slider {
         } else {
             0
         };
-        let bar_filled = "█".repeat(filled);
+        // Medium/light shade fill between half-block end caps — reads
+        // like the groove a physical monitor's own OSD bar sits in,
+        // rather than a plain bracketed `[###...]` progress bar.
+        let bar_filled = "▓".repeat(filled);
         let bar_empty = "░".repeat(BAR_WIDTH - filled);
 
         let (cursor, name_style) = if focused {
@@ -52,14 +56,19 @@ impl Slider {
             ("  ", styles::name())
         };
 
-        Line::from(vec![
+        let line = Line::from(vec![
             Span::raw(cursor),
-            Span::styled(format!("{:<18}", self.name), name_style),
-            Span::raw(" ["),
+            Span::styled(format!("{:<NAME_WIDTH$}", truncate_name(&self.name, NAME_WIDTH)), name_style),
+            Span::raw(" ▐"),
             Span::styled(bar_filled, Style::default().fg(styles::ACCENT)),
             Span::styled(bar_empty, Style::default().fg(styles::DIM)),
-            Span::raw(format!("] {:>3}", self.value)),
-        ])
+            Span::raw(format!("▌ {:>3}", self.value)),
+        ]);
+        if focused {
+            styles::with_focus_bg(line)
+        } else {
+            line
+        }
     }
 
     /// The value a click/drag at `col` (0-based, relative to the start of
@@ -153,7 +162,7 @@ mod tests {
             .unwrap();
         let buf = terminal.backend().buffer();
         let bar_col = (0..60)
-            .find(|&x| matches!(buf[(x, 0)].symbol(), "█" | "░"))
+            .find(|&x| matches!(buf[(x, 0)].symbol(), "▓" | "░"))
             .expect("expected the bar's fill characters somewhere in the rendered row");
         assert_eq!(bar_col, BAR_START_COL);
     }

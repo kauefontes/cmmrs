@@ -1755,6 +1755,15 @@ mod tests {
         mouse_at(MouseEventKind::Drag(MouseButton::Left), row, col)
     }
 
+    /// The bar's inclusive column range for `probe`, found by scanning
+    /// rather than hardcoding `Slider`'s private layout constants —
+    /// keeps these tests correct even if the bar's position/width ever
+    /// changes (it already has once, when the name column widened).
+    fn bar_col_range(probe: &Slider) -> (u16, u16) {
+        let cols: Vec<u16> = (0..200).filter(|&c| probe.value_at_column(c).is_some()).collect();
+        (*cols.first().expect("slider should have a non-empty bar"), *cols.last().unwrap())
+    }
+
     #[test]
     fn click_on_slider_row_before_the_bar_only_focuses() {
         let mut app = app_with_slider(0x10, 50, 100);
@@ -1782,9 +1791,14 @@ mod tests {
         // concern (see its tests) — this only needs to check that a
         // click *inside* the bar reaches it and issues the value it
         // reports, not re-derive the geometry.
+        // The slider starts at value 0, so pick a column comfortably
+        // inside the bar but away from its very first cell — that one
+        // also maps to 0, which would make the click a no-op (nothing
+        // *changed*) rather than exercising an actual Set.
         let probe = Slider::new(0x10, "Test", 0, 100);
-        let col = 30;
+        let col = bar_col_range(&probe).0 + 10;
         let expected = probe.value_at_column(col).expect("test's column must land inside the bar");
+        assert_ne!(expected, 0, "test's column must map to a value different from the slider's starting value");
 
         let cmd = app.handle_mouse(click_at(0, col));
         assert!(matches!(cmd, Some(Cmd::Set { value, .. }) if value == expected));
@@ -1798,7 +1812,7 @@ mod tests {
         app.click_targets = vec![Some(ClickTarget::Order(0))];
 
         let probe = Slider::new(0x10, "Test", 0, 100);
-        let col = 50; // past the bar's right edge, on "] NNN"
+        let col = bar_col_range(&probe).1 + 5; // comfortably past the bar's right edge, on "▌ NNN"
         assert_eq!(probe.value_at_column(col), None, "test's column must land past the bar");
 
         let cmd = app.handle_mouse(click_at(0, col));
@@ -1814,7 +1828,8 @@ mod tests {
         app.click_targets = vec![Some(ClickTarget::Order(0))];
 
         let probe = Slider::new(0x10, "Test", 0, 100);
-        let (col_a, col_b) = (25, 35);
+        let (first, last) = bar_col_range(&probe);
+        let (col_a, col_b) = (first + 2, last - 2);
         let value_a = probe.value_at_column(col_a).unwrap();
         let value_b = probe.value_at_column(col_b).unwrap();
         assert_ne!(value_a, value_b, "test's two columns must map to different values");

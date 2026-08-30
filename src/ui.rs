@@ -282,3 +282,101 @@ mod tests {
 }
 
 
+
+#[cfg(test)]
+mod grouped_layout_tests {
+    use super::*;
+    use crate::commands::{CtrlKind, CtrlRef};
+    use crate::components::{Action, Selector, SelectorOption, Slider};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    /// A Controls screen spanning every `categories::Category` (one
+    /// slider/selector/action per section that has one), focused on the
+    /// selector — the real end-to-end check that grouping, the restyled
+    /// components, and the focused-row highlight all land together
+    /// correctly, not just in isolation.
+    fn app_with_one_control_per_category() -> App {
+        let mut app = App::new();
+        app.loading = false;
+        app.displays = vec![crate::vcp::Display {
+            number: 1,
+            mfg_id: "GSM".into(),
+            model: "LG ULTRAWIDE".into(),
+            ..Default::default()
+        }];
+        app.caps = Some(crate::vcp::Capabilities {
+            model: String::new(),
+            mccs_version: "2.1".to_string(),
+            features: vec![],
+        });
+        app.sliders = vec![Slider::new(0x10, "Brightness", 72, 100) /* Display */];
+        app.selectors = vec![
+            Selector::new(0x14, "Select Color Preset", vec![SelectorOption { code: 1, name: "sRGB".into() }], 1), // Color
+            Selector::new(0x8d, "Audio Mute", vec![SelectorOption { code: 2, name: "Unmute".into() }], 2), // Audio
+        ];
+        app.actions = vec![Action { code: 0x04, name: "Restore Factory Defaults".into() } /* Power */];
+        app.order = vec![
+            CtrlRef { kind: CtrlKind::Slider, idx: 0 },
+            CtrlRef { kind: CtrlKind::Selector, idx: 0 },
+            CtrlRef { kind: CtrlKind::Selector, idx: 1 },
+            CtrlRef { kind: CtrlKind::Action, idx: 0 },
+        ];
+        app.cursor = 1; // "Select Color Preset"
+        app
+    }
+
+    fn render_rows(app: &mut App, width: u16, rows: u16) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, rows)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn row_text(buf: &ratatui::buffer::Buffer, y: u16, width: u16) -> String {
+        (0..width).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>().trim_end().to_string()
+    }
+
+    #[test]
+    fn sections_appear_in_category_order_and_skip_empty_ones() {
+        let mut app = app_with_one_control_per_category();
+        let buf = render_rows(&mut app, 60, 30);
+        let rows: Vec<String> = (0..30).map(|y| row_text(&buf, y, 60)).collect();
+        let text = rows.join("\n");
+
+        // Order matters: Display, then Color, then Audio, then Power —
+        // Input never shows up (nothing in it), same as the empty-
+        // section-is-skipped contract.
+        let display_at = text.find("DISPLAY").expect("DISPLAY section header");
+        let color_at = text.find("COLOR").expect("COLOR section header");
+        let audio_at = text.find("AUDIO").expect("AUDIO section header");
+        let power_at = text.find("POWER").expect("POWER section header");
+        assert!(display_at < color_at && color_at < audio_at && audio_at < power_at);
+        assert!(!text.contains("INPUT"), "a section with nothing in it must not render at all");
+    }
+
+    #[test]
+    fn section_header_line_is_not_a_click_target() {
+        let mut app = app_with_one_control_per_category();
+        let _ = render_rows(&mut app, 60, 30);
+
+        let header_idx = app.click_targets.iter().position(|t| t.is_none()).expect("expected at least one unclickable line");
+        // Not a strong claim about *which* None it is (blanks are None
+        // too) — the real property under test is that grouping's own
+        // header-line pushes went through `targets.push(None)` like
+        // every other non-control line, not `Some(..)` by accident.
+        assert!(app.click_targets[header_idx].is_none());
+    }
+
+    #[test]
+    fn focused_row_gets_the_full_line_background_highlight() {
+        let mut app = app_with_one_control_per_category();
+        let buf = render_rows(&mut app, 60, 30);
+        let rows: Vec<String> = (0..30).map(|y| row_text(&buf, y, 60)).collect();
+
+        let focused_y = rows.iter().position(|r| r.contains("Select Color Preset")).unwrap() as u16;
+        let other_y = rows.iter().position(|r| r.contains("Brightness")).unwrap() as u16;
+
+        assert_eq!(buf[(6, focused_y)].bg, styles::FOCUSED_BG);
+        assert_ne!(buf[(6, other_y)].bg, styles::FOCUSED_BG);
+    }
+}

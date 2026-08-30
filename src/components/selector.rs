@@ -1,5 +1,6 @@
 use ratatui::text::{Line, Span};
 
+use crate::components::{truncate_name, NAME_WIDTH};
 use crate::styles;
 
 /// One named value a Selector can take, e.g. `{ code: 0x11, name: "HDMI-1" }`.
@@ -65,11 +66,16 @@ impl Selector {
         } else {
             ("  ", styles::name())
         };
-        Line::from(vec![
+        let line = Line::from(vec![
             Span::raw(cursor),
-            Span::styled(format!("{:<18}", self.name), name_style),
+            Span::styled(format!("{:<NAME_WIDTH$}", truncate_name(&self.name, NAME_WIDTH)), name_style),
             Span::raw(format!(" ‹ {} ›", self.current_name())),
-        ])
+        ]);
+        if focused {
+            styles::with_focus_bg(line)
+        } else {
+            line
+        }
     }
 }
 

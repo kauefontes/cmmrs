@@ -1,9 +1,12 @@
 //! The main controls screen — port of the bulk of the Go original's
 //! `model.go` `View()`.
 
+use std::collections::BTreeMap;
+
 use ratatui::text::{Line, Span};
 
 use crate::app::{App, ClickTarget};
+use crate::categories::{category_for, Category};
 use crate::commands::CtrlKind;
 use crate::styles;
 
@@ -110,6 +113,11 @@ fn body_lines(app: &App) -> (Vec<Line<'static>>, Vec<Option<ClickTarget>>) {
     lines.push(Line::raw(""));
     targets.push(None);
 
+    // `Category` derives `Ord` in exactly the render order sections
+    // should appear (Display, Color, Audio, Power, Input, Other) — a
+    // `BTreeMap` keyed on it groups *and* orders sections in one pass, no
+    // separate "section order" list to keep in sync with the enum.
+    let mut by_category: BTreeMap<Category, Vec<(usize, Line<'static>)>> = BTreeMap::new();
     for (i, r) in app.order.iter().enumerate() {
         let focused = i == app.cursor;
         let (mut line, code) = match r.kind {
@@ -129,8 +137,26 @@ fn body_lines(app: &App) -> (Vec<Line<'static>>, Vec<Option<ClickTarget>>) {
         if app.pending.contains(&code) {
             line.spans.push(Span::styled(" …", styles::dim()));
         }
-        lines.push(line);
-        targets.push(Some(ClickTarget::Order(i)));
+        by_category.entry(category_for(code)).or_default().push((i, line));
+    }
+
+    // A section only worth a header (and the blank line separating it
+    // from whatever came before) once it actually has something in it —
+    // most monitors don't declare every category, and an empty "AUDIO"
+    // heading followed by nothing would just be visual noise.
+    let mut first_section = true;
+    for (category, entries) in by_category {
+        if !first_section {
+            lines.push(Line::raw(""));
+            targets.push(None);
+        }
+        first_section = false;
+        lines.push(Line::styled(format!("  {}", category.label()), styles::section()));
+        targets.push(None);
+        for (i, line) in entries {
+            lines.push(line);
+            targets.push(Some(ClickTarget::Order(i)));
+        }
     }
 
     if let Some(e) = &app.op_err {
