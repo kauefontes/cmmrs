@@ -15,19 +15,35 @@ use crate::app::{App, Screen};
 use crate::screens;
 use crate::styles;
 
-pub const TITLE: &str = "VCPCTL";
+pub const TITLE: &str = "CMMRS";
+
+/// Rows `render_box` always reserves above the body it's handed: the top
+/// border (1), the block's top padding (1, see `Padding::new(4, 4, 1, 1)`
+/// below), the title line, and the blank line under it. Fixed regardless
+/// of screen content, so `App::click_origin_row` is just `area.y +` this,
+/// on every screen `render_box` wraps.
+const BOX_HEADER_ROWS: u16 = 4;
 
 pub fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let area = frame.area();
 
     match app.screen {
-        Screen::Picker => render_box(frame, area, TITLE, screens::picker::render(app)),
+        Screen::Picker => {
+            let (lines, targets) = screens::picker::render(app);
+            app.click_targets = targets;
+            app.click_origin_row = area.y + BOX_HEADER_ROWS;
+            render_box(frame, area, TITLE, lines);
+        }
         Screen::Raw => screens::raw::draw(frame, area, app),
         Screen::Controls => {
             let lines = if app.confirming {
+                app.click_targets.clear(); // keyboard-only prompt, see App::handle_mouse
                 screens::controls::render_confirm(app)
             } else {
-                screens::controls::render(app)
+                let (lines, targets) = screens::controls::render(app);
+                app.click_targets = targets;
+                app.click_origin_row = area.y + BOX_HEADER_ROWS;
+                lines
             };
             render_box(frame, area, TITLE, lines);
         }

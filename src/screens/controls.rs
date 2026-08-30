@@ -3,14 +3,19 @@
 
 use ratatui::text::{Line, Span};
 
-use crate::app::App;
+use crate::app::{App, ClickTarget};
 use crate::commands::CtrlKind;
 use crate::styles;
 
-pub fn render(app: &App) -> Vec<Line<'static>> {
-    let mut lines = body_lines(app);
+/// Renders the screen, plus a click target per line (see
+/// `App::click_targets`'s docs) — the two are always built in lockstep by
+/// `body_lines` so a line's position in one vector matches its position in
+/// the other.
+pub fn render(app: &App) -> (Vec<Line<'static>>, Vec<Option<ClickTarget>>) {
+    let (mut lines, mut targets) = body_lines(app);
 
-    let mut help = "↑↓ navigate · ←→ adjust · enter run action · v raw VCP · r refresh · R rescan".to_string();
+    let mut help = "↑↓ navigate · ←→ adjust · enter run action · click/scroll · v raw VCP · r refresh · R rescan"
+        .to_string();
     if app.displays.len() > 1 {
         help.push_str(" · D switch display");
     }
@@ -18,26 +23,32 @@ pub fn render(app: &App) -> Vec<Line<'static>> {
 
     lines.push(Line::raw(""));
     lines.push(Line::styled(help, styles::dim()));
-    lines
+    targets.push(None);
+    targets.push(None);
+    (lines, targets)
 }
 
-fn body_lines(app: &App) -> Vec<Line<'static>> {
+fn body_lines(app: &App) -> (Vec<Line<'static>>, Vec<Option<ClickTarget>>) {
     let mut lines = Vec::new();
+    let mut targets = Vec::new();
 
     if app.loading {
         lines.push(Line::styled("Detecting monitors...", styles::dim()));
-        return lines;
+        targets.push(None);
+        return (lines, targets);
     }
     if let Some(e) = &app.err {
         lines.push(Line::styled(format!("Error: {e}"), styles::err()));
-        return lines;
+        targets.push(None);
+        return (lines, targets);
     }
     if app.displays.is_empty() {
         lines.push(Line::styled(
             "No DDC/CI capable displays found.",
             styles::err(),
         ));
-        return lines;
+        targets.push(None);
+        return (lines, targets);
     }
 
     let multi = app.displays.len() > 1;
@@ -61,19 +72,26 @@ fn body_lines(app: &App) -> Vec<Line<'static>> {
             styles::dim(),
         ));
         lines.push(Line::from(spans));
+        // Only worth a click target with more than one display — with
+        // just one, clicking it would be a no-op `select_display` anyway
+        // (see `handle_mouse_controls`), so leave it unclickable.
+        targets.push(multi.then_some(ClickTarget::Display(i)));
     }
     lines.push(Line::raw(""));
+    targets.push(None);
 
     if app.probing {
         lines.push(Line::styled("Reading VCP features...", styles::dim()));
-        return lines;
+        targets.push(None);
+        return (lines, targets);
     }
     if let Some(e) = &app.probe_err {
         lines.push(Line::styled(format!("Probe error: {e}"), styles::err()));
-        return lines;
+        targets.push(None);
+        return (lines, targets);
     }
     let Some(caps) = &app.caps else {
-        return lines;
+        return (lines, targets);
     };
 
     let unknown = caps.features.iter().filter(|f| !f.recognized).count();
@@ -83,11 +101,14 @@ fn body_lines(app: &App) -> Vec<Line<'static>> {
         Span::styled("● ", styles::ok()),
         Span::raw(format!("MCCS {}", caps.mccs_version)),
     ]));
+    targets.push(None);
     lines.push(Line::styled(
         summary_line(caps.features.len(), shown, unknown),
         styles::dim(),
     ));
+    targets.push(None);
     lines.push(Line::raw(""));
+    targets.push(None);
 
     for (i, r) in app.order.iter().enumerate() {
         let focused = i == app.cursor;
@@ -109,14 +130,17 @@ fn body_lines(app: &App) -> Vec<Line<'static>> {
             line.spans.push(Span::styled(" …", styles::dim()));
         }
         lines.push(line);
+        targets.push(Some(ClickTarget::Order(i)));
     }
 
     if let Some(e) = &app.op_err {
         lines.push(Line::raw(""));
         lines.push(Line::styled(format!("Failed: {e}"), styles::err()));
+        targets.push(None);
+        targets.push(None);
     }
 
-    lines
+    (lines, targets)
 }
 
 fn summary_line(total: usize, shown: usize, unknown: usize) -> String {
@@ -126,7 +150,8 @@ fn summary_line(total: usize, shown: usize, unknown: usize) -> String {
 }
 
 /// The y/N gate shown before a destructive action (e.g. "Restore factory
-/// defaults") is actually sent.
+/// defaults") is actually sent. Keyboard-only by design — see
+/// `App::handle_mouse`'s docs — so this needs no click targets.
 pub fn render_confirm(app: &App) -> Vec<Line<'static>> {
     let a = &app.actions[app.confirm_action_idx];
     vec![

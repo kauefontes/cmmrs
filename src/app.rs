@@ -11,7 +11,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
 
 use crate::cache;
@@ -25,6 +26,20 @@ pub enum Screen {
     Controls,
     Raw,
     Picker,
+}
+
+/// What clicking a given line means, on whichever text screen (Controls or
+/// Picker — the two `ui::render_box`-wrapped, `Vec<Line>`-flowing screens)
+/// most recently rendered it. `App::click_targets` holds one of these (or
+/// `None`, for a blank/header line) per line, rebuilt every frame; see its
+/// docs for how a screen row maps back to one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickTarget {
+    /// A display row — one of the header lines on Controls (only
+    /// meaningful with more than one display), or a row on the Picker.
+    Display(usize),
+    /// A control row on Controls, indexing `App::order`.
+    Order(usize),
 }
 
 #[derive(Default)]
@@ -95,6 +110,31 @@ pub struct App {
     pub raw_confirm_value: u16,
     pub raw_writing: bool,
     pub raw_write_err: Option<String>,
+
+    // ---- mouse hit-testing ---------------------------------------------
+    //
+    // Rendering is a pure `App -> Vec<Line>` function everywhere except
+    // here: these are the one bit of render output `ui`/`screens` feed
+    // back into `App`, since hit-testing a click needs to know where
+    // things ended up on screen and nothing else already tracks that.
+    // Rebuilt on every frame `ui::draw` renders (see `screens::controls`/
+    // `screens::picker`), read by `handle_mouse` on the next input event —
+    // one frame stale at worst, same lag any GUI has between a redraw and
+    // the next click.
+    /// Line-index → click target for whichever `ui::render_box`-wrapped
+    /// screen (Controls or Picker) was last drawn; `None` for a line
+    /// that's blank, a header, or otherwise unclickable. Index 0
+    /// corresponds to terminal row `click_origin_row`.
+    pub click_targets: Vec<Option<ClickTarget>>,
+    /// Terminal-absolute row of `click_targets[0]` — `render_box`'s fixed
+    /// chrome above the body (top border + top padding + title + blank
+    /// line) is the same on every screen it wraps, so this is one number,
+    /// not per-screen state.
+    pub click_origin_row: u16,
+    /// The Raw VCP screen's table `Rect` as of the last render — hit-
+    /// testing a click there also needs `raw_table_state`'s scroll offset
+    /// (already `App`'s), so this is the only extra geometry it needs.
+    pub raw_table_area: Rect,
 }
 
 impl App {
@@ -514,6 +554,152 @@ impl App {
             }
             _ => None,
         }
+    }
+
+    // ---- mouse handling --------------------------------------------------
+
+    /// Entry point mirroring `handle_key`'s dispatch, minus the gates that
+    /// don't take mouse input at all: `confirming`/`raw_confirming` are
+    /// destructive-write and undocumented-code-write prompts respectively
+    /// — deliberately keyboard-only (an explicit `y`), so a stray click
+    /// can never confirm one — and `raw_editing` is free-text numeric
+    /// entry, nothing on screen there to click.
+    pub fn handle_mouse(&mut self, ev: MouseEvent) -> Option<Cmd> {
+        if self.confirming || self.raw_confirming || self.raw_editing {
+            return None;
+        }
+        match self.screen {
+            Screen::Picker => self.handle_mouse_picker(ev),
+            Screen::Raw => self.handle_mouse_raw(ev),
+            Screen::Controls => self.handle_mouse_controls(ev),
+        }
+    }
+
+    /// The click target under terminal row `row`, per the last render —
+    /// see `click_targets`'/`click_origin_row`'s docs.
+    fn target_at(&self, row: u16) -> Option<ClickTarget> {
+        let idx = row.checked_sub(self.click_origin_row)?;
+        self.click_targets.get(idx as usize).copied().flatten()
+    }
+
+    fn handle_mouse_controls(&mut self, ev: MouseEvent) -> Option<Cmd> {
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left) => match self.target_at(ev.row)? {
+                ClickTarget::Display(i) => {
+                    if self.displays.len() > 1 && i != self.selected {
+                        return self.select_display(i);
+                    }
+                    None
+                }
+                ClickTarget::Order(i) => {
+                    self.cursor = i;
+                    let r = *self.order.get(i)?;
+                    match r.kind {
+                        // A selector's whole point is a small fixed set of
+                        // values — clicking it is naturally "advance to
+                        // the next one", same as a click cycles a
+                        // dropdown. A slider has no such single obvious
+                        // direction, so a click just focuses it (scroll
+                        // or arrow keys still adjust it) rather than
+                        // guess.
+                        CtrlKind::Selector => self.adjust(1),
+                        CtrlKind::Action => {
+                            self.confirming = true;
+                            self.confirm_action_idx = r.idx;
+                            self.op_err = None;
+                            None
+                        }
+                        CtrlKind::Slider => None,
+                    }
+                }
+            },
+            MouseEventKind::ScrollUp => self.scroll_controls(ev.row, 1),
+            MouseEventKind::ScrollDown => self.scroll_controls(ev.row, -1),
+            _ => None,
+        }
+    }
+
+    /// Scrolling over a specific slider/selector row adjusts it (same as
+    /// `←`/`→` on the focused control); scrolling anywhere else moves the
+    /// cursor up/down through the list, same as `↑`/`↓`.
+    fn scroll_controls(&mut self, row: u16, direction: i32) -> Option<Cmd> {
+        if let Some(ClickTarget::Order(i)) = self.target_at(row) {
+            self.cursor = i;
+            return self.adjust(direction);
+        }
+        if self.order.is_empty() {
+            return None;
+        }
+        if direction > 0 {
+            self.cursor = self.cursor.checked_sub(1).unwrap_or(self.order.len() - 1);
+        } else {
+            self.cursor = (self.cursor + 1) % self.order.len();
+        }
+        None
+    }
+
+    fn handle_mouse_picker(&mut self, ev: MouseEvent) -> Option<Cmd> {
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left) => match self.target_at(ev.row)? {
+                ClickTarget::Display(i) => {
+                    self.picker_cursor = i;
+                    self.select_display(i)
+                }
+                ClickTarget::Order(_) => None, // Picker never emits this
+            },
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                if self.displays.is_empty() {
+                    return None;
+                }
+                if ev.kind == MouseEventKind::ScrollUp {
+                    self.picker_cursor = self.picker_cursor.checked_sub(1).unwrap_or(self.displays.len() - 1);
+                } else {
+                    self.picker_cursor = (self.picker_cursor + 1) % self.displays.len();
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn handle_mouse_raw(&mut self, ev: MouseEvent) -> Option<Cmd> {
+        let len = self.caps.as_ref().map(|c| c.features.len()).unwrap_or(0);
+        if len == 0 {
+            return None;
+        }
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(idx) = self.raw_row_at(ev.row) {
+                    self.raw_cursor = idx;
+                }
+                None
+            }
+            MouseEventKind::ScrollUp => {
+                self.raw_cursor = self.raw_cursor.checked_sub(1).unwrap_or(len - 1);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                self.raw_cursor = (self.raw_cursor + 1) % len;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Maps a click's terminal row to a feature index in the Raw VCP
+    /// table, accounting for the table's own header row (one line) and
+    /// its current scroll offset (`raw_table_state`, which ratatui itself
+    /// keeps up to date — see the module docs on `screens::raw`).
+    fn raw_row_at(&self, row: u16) -> Option<usize> {
+        let area = self.raw_table_area;
+        if row < area.y || row >= area.y.saturating_add(area.height) {
+            return None;
+        }
+        let header_rows = 1;
+        let rel = row.checked_sub(area.y)?.checked_sub(header_rows)?;
+        let idx = self.raw_table_state.offset() + rel as usize;
+        let len = self.caps.as_ref()?.features.len();
+        (idx < len).then_some(idx)
     }
 
     // ---- msg handling --------------------------------------------------
@@ -1469,5 +1655,198 @@ mod tests {
 
         let r = app.raw_readings.get(&0x10).expect("expected raw_readings[0x10] to be populated");
         assert_eq!(r.current, 55);
+    }
+
+    // ---- mouse handling -------------------------------------------------
+
+    fn mouse(kind: MouseEventKind, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: 0,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn left_click(row: u16) -> MouseEvent {
+        mouse(MouseEventKind::Down(MouseButton::Left), row)
+    }
+
+    #[test]
+    fn click_on_slider_row_focuses_but_does_not_adjust() {
+        let mut app = app_with_slider(0x10, 50, 100);
+        app.click_origin_row = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+        app.cursor = 99; // deliberately wrong, to prove the click corrects it
+
+        let cmd = app.handle_mouse(left_click(0));
+        assert_eq!(app.cursor, 0);
+        assert!(cmd.is_none(), "a slider click should only focus, not adjust");
+        assert_eq!(app.sliders[0].value, 50);
+    }
+
+    #[test]
+    fn click_on_selector_row_advances_to_next_option() {
+        let mut app = app_with_selector(0x60, input_source_options(), 0x0f);
+        app.click_origin_row = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        let cmd = app.handle_mouse(left_click(0));
+        assert_eq!(app.cursor, 0);
+        assert!(matches!(cmd, Some(Cmd::Set { .. })), "expected a Set cmd");
+        assert_eq!(
+            app.selectors[0].selected, 0x0f,
+            "must not change optimistically before confirmation, same as the key path"
+        );
+    }
+
+    #[test]
+    fn click_on_action_row_opens_confirmation() {
+        let mut app = app_with_action(0x04, "Restore factory defaults");
+        app.click_origin_row = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        let cmd = app.handle_mouse(left_click(0));
+        assert!(app.confirming);
+        assert_eq!(app.confirm_action_idx, 0);
+        assert!(cmd.is_none(), "opening the confirm prompt issues no cmd yet");
+    }
+
+    #[test]
+    fn click_outside_click_targets_is_a_noop() {
+        let mut app = app_with_slider(0x10, 50, 100);
+        app.click_origin_row = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+        app.cursor = 0;
+
+        let cmd = app.handle_mouse(left_click(5)); // past the end of click_targets
+        assert!(cmd.is_none());
+        assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn scroll_over_slider_row_adjusts_it() {
+        let mut app = app_with_slider(0x10, 50, 100);
+        app.click_origin_row = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        let cmd = app.handle_mouse(mouse(MouseEventKind::ScrollUp, 0));
+        assert!(matches!(cmd, Some(Cmd::Set { value: 55, .. })), "step is 5 for a 0..100 range");
+    }
+
+    #[test]
+    fn scroll_off_any_control_row_moves_cursor_instead() {
+        let mut app = App::new();
+        app.loading = false;
+        app.sliders = vec![Slider::new(0x10, "A", 50, 100), Slider::new(0x12, "B", 50, 100)];
+        app.order = vec![
+            CtrlRef { kind: CtrlKind::Slider, idx: 0 },
+            CtrlRef { kind: CtrlKind::Slider, idx: 1 },
+        ];
+        app.cursor = 0;
+        // No click target at all under row 0 (e.g. it's a header/blank
+        // line) — scrolling there should move the cursor, not the slider
+        // under it.
+        app.click_origin_row = 0;
+        app.click_targets = vec![None];
+
+        let cmd = app.handle_mouse(mouse(MouseEventKind::ScrollDown, 0));
+        assert!(cmd.is_none());
+        assert_eq!(app.cursor, 1);
+    }
+
+    #[test]
+    fn click_on_display_row_switches_display_when_multiple() {
+        let mut app = App::new();
+        app.loading = false;
+        app.displays = vec![
+            Display {
+                number: 1,
+                mfg_id: "AAA".into(),
+                model: "One".into(),
+                ..Default::default()
+            },
+            Display {
+                number: 2,
+                mfg_id: "BBB".into(),
+                model: "Two".into(),
+                ..Default::default()
+            },
+        ];
+        app.display_chosen = true;
+        app.selected = 0;
+        app.click_origin_row = 0;
+        app.click_targets = vec![Some(ClickTarget::Display(0)), Some(ClickTarget::Display(1))];
+
+        let cmd = app.handle_mouse(left_click(1));
+        assert!(matches!(cmd, Some(Cmd::Probe(d)) if d.number == 2), "expected a Probe cmd for display 2");
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn mouse_is_ignored_while_confirming() {
+        let mut app = app_with_action(0x04, "Restore factory defaults");
+        app.confirming = true;
+        app.confirm_action_idx = 0;
+        app.click_origin_row = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        let cmd = app.handle_mouse(left_click(0));
+        assert!(cmd.is_none(), "the destructive-action gate must stay keyboard-only");
+        assert!(app.confirming, "must still be waiting on y/n");
+    }
+
+    #[test]
+    fn picker_click_selects_display() {
+        let mut app = App::new();
+        app.loading = false;
+        app.screen = Screen::Picker;
+        app.displays = vec![
+            Display {
+                number: 1,
+                mfg_id: "AAA".into(),
+                ..Default::default()
+            },
+            Display {
+                number: 2,
+                mfg_id: "BBB".into(),
+                ..Default::default()
+            },
+        ];
+        app.click_origin_row = 0;
+        app.click_targets = vec![Some(ClickTarget::Display(0)), Some(ClickTarget::Display(1))];
+
+        let cmd = app.handle_mouse(left_click(1));
+        assert_eq!(app.picker_cursor, 1);
+        assert!(matches!(cmd, Some(Cmd::Probe(d)) if d.number == 2));
+    }
+
+    #[test]
+    fn raw_screen_click_selects_row_accounting_for_scroll_offset() {
+        let mut app = raw_screen_app_with_two_features();
+        app.raw_table_area = Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 5,
+        };
+        *app.raw_table_state.offset_mut() = 1; // scrolled past feature 0
+        app.raw_cursor = 0;
+
+        // Row 0 is the table's own header; row 1 (area.y + header) is the
+        // first *data* row, which — with offset 1 — is feature index 1.
+        let cmd = app.handle_mouse(left_click(1));
+        assert!(cmd.is_none());
+        assert_eq!(app.raw_cursor, 1);
+    }
+
+    #[test]
+    fn raw_screen_scroll_moves_cursor_and_wraps() {
+        let mut app = raw_screen_app_with_two_features();
+        app.raw_cursor = 1; // last of the two features
+
+        let cmd = app.handle_mouse(mouse(MouseEventKind::ScrollDown, 0));
+        assert!(cmd.is_none());
+        assert_eq!(app.raw_cursor, 0, "should wrap back to the first feature");
     }
 }

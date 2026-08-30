@@ -144,6 +144,25 @@ Inside the Raw VCP screen: `↑↓`/`j`/`k` move the focused row, `f`/`pgdn`
 and `b`/`pgup` page, `e` edits the focused row's value, `r` rescans, `esc`/`v`
 goes back.
 
+## Mouse
+
+Every screen also takes mouse input, not just the keyboard:
+
+| Action | Effect |
+| --- | --- |
+| Click a control row | Focuses it; a selector also advances to its next value (an action opens its confirmation prompt) |
+| Scroll wheel over a control row | Adjusts it, same as `←`/`→` |
+| Scroll wheel elsewhere | Moves the cursor, same as `↑`/`↓` |
+| Click a display row (Controls header, multi-display only) | Switches to that display |
+| Click/scroll on the Picker or Raw VCP table | Selects a display / a feature row |
+
+A slider only *focuses* on click rather than jumping to wherever was
+clicked — there's no single obvious value a click on a progress bar
+implies, so scroll or the arrow keys do the actual adjusting. The two
+confirmation prompts (a destructive action, an undocumented raw-code
+write) are deliberately keyboard-only — a stray click should never be
+able to confirm one.
+
 ## Logs
 
 The TUI takes over the terminal, so nothing gets printed while it's

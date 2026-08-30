@@ -132,6 +132,8 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, caps: &Capabilities, app: &mut 
     // old hand-rolled viewport that's still `App`'s job (ratatui has no
     // concept of "page size" to ask a `Table` for).
     app.raw_visible_rows = table_area.height.saturating_sub(1).max(1) as usize;
+    // For `App::raw_row_at` to map a click back to a feature index later.
+    app.raw_table_area = table_area;
 
     let table = build_table(caps, &app.raw_readings);
     app.raw_table_state.select(Some(app.raw_cursor));
@@ -158,7 +160,7 @@ fn draw_table(frame: &mut Frame<'_>, area: Rect, caps: &Capabilities, app: &mut 
 
     frame.render_widget(
         Line::styled(
-            "↑↓/j/k move · f/pgdn b/pgup page · e edit value · r rescan · esc/v back · q quit",
+            "↑↓/j/k move · click/scroll row · f/pgdn b/pgup page · e edit value · r rescan · esc/v back · q quit",
             styles::dim(),
         ),
         help_area,

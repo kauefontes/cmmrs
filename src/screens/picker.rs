@@ -2,10 +2,12 @@
 
 use ratatui::text::{Line, Span};
 
-use crate::app::App;
+use crate::app::{App, ClickTarget};
 use crate::styles;
 
-pub fn render(app: &App) -> Vec<Line<'static>> {
+/// Renders the screen, plus a click target per line — see
+/// `App::click_targets`'s docs.
+pub fn render(app: &App) -> (Vec<Line<'static>>, Vec<Option<ClickTarget>>) {
     let mut lines = vec![
         Line::styled(
             format!(
@@ -16,6 +18,7 @@ pub fn render(app: &App) -> Vec<Line<'static>> {
         ),
         Line::raw(""),
     ];
+    let mut targets = vec![None, None];
 
     for (i, d) in app.displays.iter().enumerate() {
         let mut label = d.mfg_id.clone();
@@ -34,12 +37,15 @@ pub fn render(app: &App) -> Vec<Line<'static>> {
             Span::raw(cursor),
             Span::styled(label, style),
         ]));
+        targets.push(Some(ClickTarget::Display(i)));
     }
 
     lines.push(Line::raw(""));
     lines.push(Line::styled(
-        "↑↓ navigate · enter select · q quit",
+        "↑↓ navigate · enter/click select · scroll · q quit",
         styles::dim(),
     ));
-    lines
+    targets.push(None);
+    targets.push(None);
+    (lines, targets)
 }
