@@ -73,6 +73,7 @@ fn draw_scrollable(
     let body_area = render_box(frame, area, TITLE, lines, app.click_scroll);
     app.click_targets = targets;
     app.click_origin_row = body_area.y;
+    app.click_origin_col = body_area.x;
 }
 
 /// The smallest scroll offset (starting from `scroll`, previous frame's

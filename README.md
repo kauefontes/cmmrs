@@ -146,22 +146,24 @@ goes back.
 
 ## Mouse
 
-Every screen also takes mouse input, not just the keyboard:
+Every screen also takes mouse input, not just the keyboard. The rule of
+thumb: **scroll always navigates, click/drag on a slider's bar sets its
+value.**
 
 | Action | Effect |
 | --- | --- |
-| Click a control row | Focuses it; a selector also advances to its next value (an action opens its confirmation prompt) |
-| Scroll wheel over a control row | Adjusts it, same as `←`/`→` |
-| Scroll wheel elsewhere | Moves the cursor, same as `↑`/`↓` |
+| Scroll wheel, anywhere | Always moves the cursor, same as `↑`/`↓` — never touches a value, regardless of what's under the pointer |
+| Click a slider's bar | Sets it to the value that column maps to (drag the same edge-to-edge scale a Go/web slider would) |
+| Click a slider's name or its `NNN` value text | Focuses it only — no value change |
+| Drag across a slider's bar | Follows the pointer continuously, same mapping as a click |
+| Click a selector row | Focuses it and advances to its next value |
+| Click an action row | Opens its confirmation prompt |
 | Click a display row (Controls header, multi-display only) | Switches to that display |
 | Click/scroll on the Picker or Raw VCP table | Selects a display / a feature row |
 
-A slider only *focuses* on click rather than jumping to wherever was
-clicked — there's no single obvious value a click on a progress bar
-implies, so scroll or the arrow keys do the actual adjusting. The two
-confirmation prompts (a destructive action, an undocumented raw-code
-write) are deliberately keyboard-only — a stray click should never be
-able to confirm one.
+The two confirmation prompts (a destructive action, an undocumented
+raw-code write) are deliberately keyboard-only — a stray click should
+never be able to confirm one.
 
 Controls/Picker also don't stretch to fill the whole terminal when there's
 not enough content to need it — the box sizes to its content, growing to

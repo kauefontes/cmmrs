@@ -130,6 +130,11 @@ pub struct App {
     /// Terminal-absolute row of the body's first *visible* line as of the
     /// last render (`render_box`'s returned body `Rect`'s `y`).
     pub click_origin_row: u16,
+    /// Terminal-absolute column where each rendered line starts
+    /// (`render_box`'s returned body `Rect`'s `x`) — `target_at` only
+    /// needs the row to find *which* control a click landed on, but a
+    /// slider's bar needs the column too, to know *where in it*.
+    pub click_origin_col: u16,
     /// How many lines of `click_targets` are scrolled off the top when
     /// content doesn't fit in the available height — `click_origin_row`
     /// plus this many is where `click_targets[0]` would be if it weren't
@@ -587,6 +592,49 @@ impl App {
         self.click_targets.get(idx).copied().flatten()
     }
 
+    /// `col`, translated into "column within its own control's rendered
+    /// line" — what `Slider::value_at_column` expects. See
+    /// `click_origin_col`'s docs.
+    fn col_in_line(&self, col: u16) -> Option<u16> {
+        col.checked_sub(self.click_origin_col)
+    }
+
+    /// Steps a 0-based cursor by one position within `0..len`, wrapping —
+    /// the one piece of logic every "move through a list" input shares:
+    /// `↑`/`↓` and scroll wheel on both Controls and Picker. `direction >
+    /// 0` means "up" (toward index 0), matching `handle_key_controls`'
+    /// existing `KeyCode::Up` arm.
+    fn step_cursor(cursor: usize, len: usize, direction: i32) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        if direction > 0 {
+            cursor.checked_sub(1).unwrap_or(len - 1)
+        } else {
+            (cursor + 1) % len
+        }
+    }
+
+    /// Sets a slider (identified by its index into `order`) to `value`,
+    /// same shape of result `adjust` returns for a step — `None` if it's
+    /// not actually a slider, or the value didn't change.
+    fn set_slider_value(&mut self, order_idx: usize, value: u16) -> Option<Cmd> {
+        let r = *self.order.get(order_idx)?;
+        if r.kind != CtrlKind::Slider {
+            return None;
+        }
+        let s = &self.sliders[r.idx];
+        if value == s.value {
+            return None;
+        }
+        self.op_err = None;
+        Some(Cmd::Set {
+            display_num: self.display_num(),
+            code: s.code,
+            value,
+        })
+    }
+
     fn handle_mouse_controls(&mut self, ev: MouseEvent) -> Option<Cmd> {
         match ev.kind {
             MouseEventKind::Down(MouseButton::Left) => match self.target_at(ev.row)? {
@@ -603,10 +651,7 @@ impl App {
                         // A selector's whole point is a small fixed set of
                         // values — clicking it is naturally "advance to
                         // the next one", same as a click cycles a
-                        // dropdown. A slider has no such single obvious
-                        // direction, so a click just focuses it (scroll
-                        // or arrow keys still adjust it) rather than
-                        // guess.
+                        // dropdown.
                         CtrlKind::Selector => self.adjust(1),
                         CtrlKind::Action => {
                             self.confirming = true;
@@ -614,33 +659,49 @@ impl App {
                             self.op_err = None;
                             None
                         }
-                        CtrlKind::Slider => None,
+                        // A slider only sets a value when the click
+                        // actually landed *inside the bar* — clicking its
+                        // name or the "NNN" value text past the bar just
+                        // focuses it, same as any other row.
+                        CtrlKind::Slider => {
+                            let col = self.col_in_line(ev.column)?;
+                            let value = self.sliders[r.idx].value_at_column(col)?;
+                            self.set_slider_value(i, value)
+                        }
                     }
                 }
             },
-            MouseEventKind::ScrollUp => self.scroll_controls(ev.row, 1),
-            MouseEventKind::ScrollDown => self.scroll_controls(ev.row, -1),
+            // Dragging (button still held) across a slider's bar tracks
+            // the pointer continuously, same mapping as a click — the
+            // rest of a drag (over a selector/action, or off the bar
+            // entirely) is a no-op rather than doing anything on every
+            // intermediate position.
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let ClickTarget::Order(i) = self.target_at(ev.row)? else {
+                    return None;
+                };
+                let r = *self.order.get(i)?;
+                if r.kind != CtrlKind::Slider {
+                    return None;
+                }
+                let col = self.col_in_line(ev.column)?;
+                let value = self.sliders[r.idx].value_at_column(col)?;
+                self.set_slider_value(i, value)
+            }
+            // Scroll always just moves through the list — it never
+            // touches a value, regardless of what's under the pointer.
+            // (Click/drag on a slider's bar above is the only mouse path
+            // that sets one.)
+            MouseEventKind::ScrollUp => {
+                self.cursor = Self::step_cursor(self.cursor, self.order.len(), 1);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                self.cursor = Self::step_cursor(self.cursor, self.order.len(), -1);
+                None
+            }
             _ => None,
         }
-    }
-
-    /// Scrolling over a specific slider/selector row adjusts it (same as
-    /// `←`/`→` on the focused control); scrolling anywhere else moves the
-    /// cursor up/down through the list, same as `↑`/`↓`.
-    fn scroll_controls(&mut self, row: u16, direction: i32) -> Option<Cmd> {
-        if let Some(ClickTarget::Order(i)) = self.target_at(row) {
-            self.cursor = i;
-            return self.adjust(direction);
-        }
-        if self.order.is_empty() {
-            return None;
-        }
-        if direction > 0 {
-            self.cursor = self.cursor.checked_sub(1).unwrap_or(self.order.len() - 1);
-        } else {
-            self.cursor = (self.cursor + 1) % self.order.len();
-        }
-        None
     }
 
     fn handle_mouse_picker(&mut self, ev: MouseEvent) -> Option<Cmd> {
@@ -652,15 +713,12 @@ impl App {
                 }
                 ClickTarget::Order(_) => None, // Picker never emits this
             },
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                if self.displays.is_empty() {
-                    return None;
-                }
-                if ev.kind == MouseEventKind::ScrollUp {
-                    self.picker_cursor = self.picker_cursor.checked_sub(1).unwrap_or(self.displays.len() - 1);
-                } else {
-                    self.picker_cursor = (self.picker_cursor + 1) % self.displays.len();
-                }
+            MouseEventKind::ScrollUp => {
+                self.picker_cursor = Self::step_cursor(self.picker_cursor, self.displays.len(), 1);
+                None
+            }
+            MouseEventKind::ScrollDown => {
+                self.picker_cursor = Self::step_cursor(self.picker_cursor, self.displays.len(), -1);
                 None
             }
             _ => None,
@@ -1677,17 +1735,124 @@ mod tests {
         mouse(MouseEventKind::Down(MouseButton::Left), row)
     }
 
+    /// Same as `left_click`/`mouse`, but with an explicit column — needed
+    /// for anything that depends on *where* in the row the pointer was,
+    /// i.e. a slider's bar.
+    fn mouse_at(kind: MouseEventKind, row: u16, col: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn click_at(row: u16, col: u16) -> MouseEvent {
+        mouse_at(MouseEventKind::Down(MouseButton::Left), row, col)
+    }
+
+    fn drag_at(row: u16, col: u16) -> MouseEvent {
+        mouse_at(MouseEventKind::Drag(MouseButton::Left), row, col)
+    }
+
     #[test]
-    fn click_on_slider_row_focuses_but_does_not_adjust() {
+    fn click_on_slider_row_before_the_bar_only_focuses() {
         let mut app = app_with_slider(0x10, 50, 100);
         app.click_origin_row = 0;
         app.click_targets = vec![Some(ClickTarget::Order(0))];
         app.cursor = 99; // deliberately wrong, to prove the click corrects it
 
+        // Column 0 lands in the name label, well before the bar starts
+        // (see components::slider's BAR_START_COL/its own tests) — click
+        // there should focus, not set a value.
         let cmd = app.handle_mouse(left_click(0));
         assert_eq!(app.cursor, 0);
-        assert!(cmd.is_none(), "a slider click should only focus, not adjust");
+        assert!(cmd.is_none(), "clicking the label shouldn't set a value");
         assert_eq!(app.sliders[0].value, 50);
+    }
+
+    #[test]
+    fn click_inside_slider_bar_sets_the_value_it_maps_to() {
+        let mut app = app_with_slider(0x10, 0, 100);
+        app.click_origin_row = 0;
+        app.click_origin_col = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        // The exact column->value mapping is components::Slider's own
+        // concern (see its tests) — this only needs to check that a
+        // click *inside* the bar reaches it and issues the value it
+        // reports, not re-derive the geometry.
+        let probe = Slider::new(0x10, "Test", 0, 100);
+        let col = 30;
+        let expected = probe.value_at_column(col).expect("test's column must land inside the bar");
+
+        let cmd = app.handle_mouse(click_at(0, col));
+        assert!(matches!(cmd, Some(Cmd::Set { value, .. }) if value == expected));
+    }
+
+    #[test]
+    fn click_past_slider_bar_on_the_value_text_only_focuses() {
+        let mut app = app_with_slider(0x10, 50, 100);
+        app.click_origin_row = 0;
+        app.click_origin_col = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        let probe = Slider::new(0x10, "Test", 0, 100);
+        let col = 50; // past the bar's right edge, on "] NNN"
+        assert_eq!(probe.value_at_column(col), None, "test's column must land past the bar");
+
+        let cmd = app.handle_mouse(click_at(0, col));
+        assert!(cmd.is_none());
+        assert_eq!(app.sliders[0].value, 50);
+    }
+
+    #[test]
+    fn drag_across_slider_bar_updates_value_continuously() {
+        let mut app = app_with_slider(0x10, 0, 100);
+        app.click_origin_row = 0;
+        app.click_origin_col = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        let probe = Slider::new(0x10, "Test", 0, 100);
+        let (col_a, col_b) = (25, 35);
+        let value_a = probe.value_at_column(col_a).unwrap();
+        let value_b = probe.value_at_column(col_b).unwrap();
+        assert_ne!(value_a, value_b, "test's two columns must map to different values");
+
+        let cmd_a = app.handle_mouse(drag_at(0, col_a));
+        assert!(matches!(cmd_a, Some(Cmd::Set { value, .. }) if value == value_a));
+
+        // A real drag would have its value committed by `Msg::Set`
+        // between these two points — do that by hand so the second drag
+        // is compared against the updated value, not the stale one.
+        app.sliders[0].value = value_a;
+
+        let cmd_b = app.handle_mouse(drag_at(0, col_b));
+        assert!(matches!(cmd_b, Some(Cmd::Set { value, .. }) if value == value_b));
+    }
+
+    #[test]
+    fn drag_off_the_bar_is_a_noop() {
+        let mut app = app_with_slider(0x10, 50, 100);
+        app.click_origin_row = 0;
+        app.click_origin_col = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        let cmd = app.handle_mouse(drag_at(0, 0)); // column 0: before the bar
+        assert!(cmd.is_none());
+        assert_eq!(app.sliders[0].value, 50);
+    }
+
+    #[test]
+    fn drag_over_a_selector_is_a_noop() {
+        let mut app = app_with_selector(0x60, input_source_options(), 0x0f);
+        app.click_origin_row = 0;
+        app.click_origin_col = 0;
+        app.click_targets = vec![Some(ClickTarget::Order(0))];
+
+        let cmd = app.handle_mouse(drag_at(0, 30));
+        assert!(cmd.is_none(), "drag only ever does something on a slider's bar");
+        assert_eq!(app.selectors[0].selected, 0x0f);
     }
 
     #[test]
@@ -1730,13 +1895,25 @@ mod tests {
     }
 
     #[test]
-    fn scroll_over_slider_row_adjusts_it() {
-        let mut app = app_with_slider(0x10, 50, 100);
+    fn scroll_over_a_slider_row_only_moves_cursor_never_adjusts_value() {
+        let mut app = App::new();
+        app.loading = false;
+        app.sliders = vec![Slider::new(0x10, "A", 50, 100), Slider::new(0x12, "B", 50, 100)];
+        app.order = vec![
+            CtrlRef { kind: CtrlKind::Slider, idx: 0 },
+            CtrlRef { kind: CtrlKind::Slider, idx: 1 },
+        ];
+        app.cursor = 0;
+        // A real click target *is* present under row 0 this time (unlike
+        // the header/blank-line case below) — scroll must still just
+        // move the cursor, never touch the value under the pointer.
         app.click_origin_row = 0;
-        app.click_targets = vec![Some(ClickTarget::Order(0))];
+        app.click_targets = vec![Some(ClickTarget::Order(0)), Some(ClickTarget::Order(1))];
 
-        let cmd = app.handle_mouse(mouse(MouseEventKind::ScrollUp, 0));
-        assert!(matches!(cmd, Some(Cmd::Set { value: 55, .. })), "step is 5 for a 0..100 range");
+        let cmd = app.handle_mouse(mouse(MouseEventKind::ScrollDown, 0));
+        assert!(cmd.is_none(), "scroll must never issue a Set, even hovering a slider");
+        assert_eq!(app.cursor, 1);
+        assert_eq!(app.sliders[0].value, 50, "the value under the pointer must be untouched");
     }
 
     #[test]
