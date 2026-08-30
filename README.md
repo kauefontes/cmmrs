@@ -163,6 +163,12 @@ confirmation prompts (a destructive action, an undocumented raw-code
 write) are deliberately keyboard-only — a stray click should never be
 able to confirm one.
 
+Controls/Picker also don't stretch to fill the whole terminal when there's
+not enough content to need it — the box sizes to its content, growing to
+fill the available height only once content doesn't fit, at which point it
+scrolls (keeping the focused control in view, with a scrollbar) instead of
+spilling content past the bottom border.
+
 ## Logs
 
 The TUI takes over the terminal, so nothing gets printed while it's

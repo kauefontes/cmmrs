@@ -43,11 +43,11 @@ const WIDTHS: [Constraint; 4] = [
 /// the actual scrollable feature table.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
     if app.raw_confirming {
-        ui::render_box(frame, area, ui::TITLE, render_confirm(app));
+        ui::render_box(frame, area, ui::TITLE, render_confirm(app), 0);
         return;
     }
     if app.raw_editing {
-        ui::render_box(frame, area, ui::TITLE, render_edit(app));
+        ui::render_box(frame, area, ui::TITLE, render_edit(app), 0);
         return;
     }
     let Some(caps) = app.caps.clone() else {
@@ -56,6 +56,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
             area,
             ui::TITLE,
             vec![Line::styled("No capabilities loaded.", styles::err())],
+            0,
         );
         return;
     };
@@ -71,7 +72,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
                 styles::dim(),
             ),
         ];
-        ui::render_box(frame, area, ui::TITLE, lines);
+        ui::render_box(frame, area, ui::TITLE, lines, 0);
         return;
     }
     if let Some(e) = app.raw_err.clone() {
@@ -83,7 +84,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, app: &mut App) {
             Line::raw(""),
             Line::styled(format!("Error: {e}"), styles::err()),
         ];
-        ui::render_box(frame, area, ui::TITLE, lines);
+        ui::render_box(frame, area, ui::TITLE, lines, 0);
         return;
     }
 

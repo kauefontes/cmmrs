@@ -123,14 +123,18 @@ pub struct App {
     // the next click.
     /// Line-index → click target for whichever `ui::render_box`-wrapped
     /// screen (Controls or Picker) was last drawn; `None` for a line
-    /// that's blank, a header, or otherwise unclickable. Index 0
-    /// corresponds to terminal row `click_origin_row`.
+    /// that's blank, a header, or otherwise unclickable. Index 0 is the
+    /// *first line of content*, not necessarily what's on screen at
+    /// `click_origin_row` — see `click_scroll`.
     pub click_targets: Vec<Option<ClickTarget>>,
-    /// Terminal-absolute row of `click_targets[0]` — `render_box`'s fixed
-    /// chrome above the body (top border + top padding + title + blank
-    /// line) is the same on every screen it wraps, so this is one number,
-    /// not per-screen state.
+    /// Terminal-absolute row of the body's first *visible* line as of the
+    /// last render (`render_box`'s returned body `Rect`'s `y`).
     pub click_origin_row: u16,
+    /// How many lines of `click_targets` are scrolled off the top when
+    /// content doesn't fit in the available height — `click_origin_row`
+    /// plus this many is where `click_targets[0]` would be if it weren't
+    /// off screen. 0 whenever everything fits, which is the common case.
+    pub click_scroll: u16,
     /// The Raw VCP screen's table `Rect` as of the last render — hit-
     /// testing a click there also needs `raw_table_state`'s scroll offset
     /// (already `App`'s), so this is the only extra geometry it needs.
@@ -576,10 +580,11 @@ impl App {
     }
 
     /// The click target under terminal row `row`, per the last render —
-    /// see `click_targets`'/`click_origin_row`'s docs.
+    /// see `click_targets`'/`click_origin_row`'/`click_scroll`'s docs.
     fn target_at(&self, row: u16) -> Option<ClickTarget> {
-        let idx = row.checked_sub(self.click_origin_row)?;
-        self.click_targets.get(idx as usize).copied().flatten()
+        let visible_idx = row.checked_sub(self.click_origin_row)?;
+        let idx = visible_idx as usize + self.click_scroll as usize;
+        self.click_targets.get(idx).copied().flatten()
     }
 
     fn handle_mouse_controls(&mut self, ev: MouseEvent) -> Option<Cmd> {
