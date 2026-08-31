@@ -1,0 +1,42 @@
+name: Release binaries
+
+# Attaches a prebuilt Linux binary to the GitHub Release for a `vX.Y.Z`
+# tag — for anyone who'd rather grab a binary than `cargo install`/build
+# from source. Deliberately does NOT touch crates.io: `cargo publish`
+# stays a manual, local step (see packaging/aur/README.md and the commit
+# history around the 0.1.0 release for why — a stored registry token in
+# CI is exactly the kind of thing worth not adding for a low-frequency
+# solo-maintainer release cadence).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Linux x86_64 only for now, matching what CI actually builds/tests
+    # (see ci.yml) — the only platform with a native backend today (see
+    # backend/native.rs). aarch64 is plausible later but isn't
+    # cross-compiled/verified anywhere yet, so it's not claimed here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          staging="cmmrs-${{ github.ref_name }}-x86_64-linux"
+          mkdir "$staging"
+          cp target/release/cmmrs README.md LICENSE "$staging/"
+          tar -czf "$staging.tar.gz" "$staging"
+          sha256sum "$staging.tar.gz" > "$staging.tar.gz.sha256"
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            cmmrs-${{ github.ref_name }}-x86_64-linux.tar.gz
+            cmmrs-${{ github.ref_name }}-x86_64-linux.tar.gz.sha256
