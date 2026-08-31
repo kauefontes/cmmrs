@@ -49,6 +49,19 @@ struct Entry {
     db: Option<Database>,
 }
 
+// SAFETY: `Monitor` holds IOKit/CoreFoundation handles — opaque
+// references to kernel/CF objects (a raw pointer under the hood, which
+// is why the compiler won't derive `Send` on its own), not a
+// thread-affine resource the way a UI-toolkit type can be. This only
+// needs to be safe to *move* between threads over time, never to *use*
+// concurrently from two at once: every actual DDC/CI call already runs
+// on exactly one worker thread at a time (see `worker.rs`'s docs), and
+// the `Mutex<Vec<Entry>>` this ends up behind (`MacosBackend`, below)
+// already enforces exclusive access regardless of what's inside it.
+// `backend::native::Entry` needs no equivalent — its handle is just a
+// plain file descriptor, `Send` for free.
+unsafe impl Send for Entry {}
+
 /// `DdcBackend` implementation over IOKit — no `ddcutil` subprocess
 /// involved. See `backend::native::NativeBackend`'s docs for why handles
 /// are kept open across calls instead of reopened per call.
