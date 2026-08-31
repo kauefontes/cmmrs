@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # macos-volume-delay-fix: temporary, same reason as before — the only
+    # way to compile-check a macOS-only change before a human verifies
+    # it for real. Drop once that lands on main.
+    branches: [main, macos-volume-delay-fix]
   pull_request:
 
 env:

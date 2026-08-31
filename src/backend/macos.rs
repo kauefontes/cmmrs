@@ -20,10 +20,25 @@
 //! (via `Monitor::edid()`) are still parsed with the same `edid` crate
 //! `backend::native` uses, just for the vendor ID field, which
 //! `ddc-macos` doesn't surface pre-parsed.
+//!
+//! One real gap `pace()` (below) works around: the `ddc` crate's generic
+//! command dispatch schedules the DDC/CI spec's mandated inter-command
+//! delay via `DdcHost::set_sleep_delay` after every command, meant to be
+//! consumed by `self.sleep()` at the top of the *next* one — but
+//! `ddc_macos::Monitor::execute_raw` never calls it, so on macOS that
+//! delay is scheduled and then silently dropped. `ddc_i2c::I2cDeviceDdc`
+//! (Linux) does call it, which is exactly why this only ever showed up
+//! here: writing a value and immediately reading it back to verify (see
+//! `set_vcp`) needs the monitor's own microcontroller to actually finish
+//! applying the change first, and some VCP codes (a real report: Audio
+//! Speaker Volume, likely genuinely slower to settle in hardware than a
+//! purely digital register like Brightness) need that gap for real —
+//! without it, the verify read raced the monitor and got back a
+//! malformed reply ("invalid DDC/CI length").
 
 use std::sync::Mutex;
 
-use ddc::Ddc;
+use ddc::{Ddc, DdcHost};
 use ddc_macos::Monitor;
 use mccs_db::{Database, ValueType as DbValueType};
 
@@ -111,6 +126,16 @@ impl DdcBackend for MacosBackend {
     }
 }
 
+/// Consumes whatever inter-command delay the `ddc` crate's generic
+/// dispatch scheduled after the *previous* DDC/CI command on this
+/// monitor (a no-op if there wasn't one, or if it's already elapsed) —
+/// see this module's top docs for why `Monitor` needs this called by
+/// hand before every command instead of doing it internally the way
+/// `ddc_i2c::I2cDeviceDdc` does.
+fn pace(monitor: &mut Monitor) {
+    monitor.sleep();
+}
+
 fn entry_mut(entries: &mut [Entry], display_num: i32) -> Result<&mut Entry> {
     entries
         .get_mut(display_num as usize - 1)
@@ -192,6 +217,7 @@ fn ensure_caps(entry: &mut Entry) -> Result<()> {
         return Ok(());
     }
 
+    pace(&mut entry.monitor);
     let cap_bytes = entry
         .monitor
         .capabilities_string()
@@ -227,6 +253,7 @@ fn get_vcp(entry: &mut Entry, code: u8) -> Result<FeatureReading> {
         }
     }
 
+    pace(&mut entry.monitor);
     let value = entry
         .monitor
         .get_vcp_feature(code)
@@ -283,11 +310,17 @@ fn set_vcp(entry: &mut Entry, code: u8, value: u16, permit_unknown: bool) -> Res
         }
     }
 
+    pace(&mut entry.monitor);
     entry
         .monitor
         .set_vcp_feature(code, value)
         .map_err(|e| BackendError::msg(format!("{}: setvcp {code:02x} {value}: {e}", entry.monitor.description())))?;
 
+    // This is the pace() call that actually matters most (see this
+    // module's top docs) — reading straight back after a write is
+    // exactly the sequence that raced the monitor and got a malformed
+    // reply for real, on Audio Speaker Volume specifically.
+    pace(&mut entry.monitor);
     let readback = entry.monitor.get_vcp_feature(code).map_err(|e| {
         BackendError::msg(format!(
             "{}: setvcp {code:02x} {value}: verify read failed: {e}",
