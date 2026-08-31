@@ -10,6 +10,16 @@ name: Release binaries
 on:
   push:
     tags: ['v*']
+  # Manual re-run against any existing tag — mainly for backfilling a
+  # release from before this workflow existed (workflows for a tag push
+  # only trigger if they're already present at the commit the tag
+  # points to, so v0.1.0 itself won't auto-trigger this one) or retrying
+  # a failed build without pushing a new tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and attach binaries to'
+        required: true
 
 permissions:
   contents: write
@@ -22,14 +32,23 @@ jobs:
     # cross-compiled/verified anywhere yet, so it's not claimed here.
     runs-on: ubuntu-latest
     steps:
+      # workflow_dispatch runs against whatever branch/ref you launch it
+      # from (default main), not the tag itself — github.ref_name would
+      # be wrong for that trigger, so resolve the real tag once here and
+      # use it everywhere below instead.
+      - name: Resolve tag
+        id: tag
+        run: echo "name=${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.name }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: cargo build --release --locked
       - name: Package
         run: |
-          staging="cmmrs-${{ github.ref_name }}-x86_64-linux"
+          staging="cmmrs-${{ steps.tag.outputs.name }}-x86_64-linux"
           mkdir "$staging"
           cp target/release/cmmrs README.md LICENSE "$staging/"
           tar -czf "$staging.tar.gz" "$staging"
@@ -37,6 +56,7 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.name }}
           files: |
-            cmmrs-${{ github.ref_name }}-x86_64-linux.tar.gz
-            cmmrs-${{ github.ref_name }}-x86_64-linux.tar.gz.sha256
+            cmmrs-${{ steps.tag.outputs.name }}-x86_64-linux.tar.gz
+            cmmrs-${{ steps.tag.outputs.name }}-x86_64-linux.tar.gz.sha256
