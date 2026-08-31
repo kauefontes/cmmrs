@@ -12,6 +12,30 @@ use crate::vcp::{Capabilities, Display, FeatureReading, RawBytes, VcpFeature, Vc
 
 use super::{BackendError, DdcBackend, Result};
 
+/// Runs a `ddcutil` `Command`, turning "the binary just isn't there"
+/// (`io::ErrorKind::NotFound` — overwhelmingly the actual cause any time
+/// spawning it fails at all) into something a user can act on instead of
+/// a raw OS error leaking straight into the UI. This backend is the
+/// fallback, so a missing `ddcutil` install is often discovered right
+/// here — e.g. the native backend correctly finding zero displays
+/// because nothing's plugged in (not broken, just nothing to find),
+/// falling through to this backend, which then has nothing to fall back
+/// to itself if `ddcutil` was never installed.
+fn run(command: &mut Command) -> Result<std::process::Output> {
+    command.output().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            BackendError::msg(
+                "ddcutil not found. Install it (e.g. `brew install ddcutil` on macOS, \
+                 your distro's package on Linux) so the fallback backend has something \
+                 to run, or connect an external DDC/CI monitor so a native backend can \
+                 be used instead.",
+            )
+        } else {
+            BackendError::msg(format!("running ddcutil: {e}"))
+        }
+    })
+}
+
 pub struct DdcutilBackend;
 
 impl DdcutilBackend {
@@ -56,7 +80,7 @@ static VCP_VER_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"VCP version:\
 
 /// Runs `ddcutil detect` and returns every valid (non-laptop) display found.
 fn detect() -> Result<Vec<Display>> {
-    let output = Command::new("ddcutil").arg("detect").output()?;
+    let output = run(Command::new("ddcutil").arg("detect"))?;
     let out = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
 
@@ -122,12 +146,11 @@ static PARSED_ENTRY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([0-9A-Fa-f]{2}):\s+(.*)$").unwrap());
 
 fn get_capabilities(display_num: i32) -> Result<Capabilities> {
-    let output = Command::new("ddcutil")
+    let output = run(Command::new("ddcutil")
         .arg("--display")
         .arg(display_num.to_string())
         .arg("capabilities")
-        .arg("--verbose")
-        .output()?;
+        .arg("--verbose"))?;
     let out = String::from_utf8_lossy(&output.stdout).into_owned();
     if !output.status.success() && out.trim().is_empty() {
         return Err(BackendError::msg("ddcutil capabilities: command failed"));
@@ -251,12 +274,11 @@ static GENERIC_REPLY_RE: LazyLock<Regex> =
 /// write-only/action feature (e.g. "restore factory defaults") is not an
 /// error: it comes back as `FeatureReading { readable: false, .. }`.
 fn get_vcp(display_num: i32, code: u8) -> Result<FeatureReading> {
-    let output = Command::new("ddcutil")
+    let output = run(Command::new("ddcutil")
         .arg("--display")
         .arg(display_num.to_string())
         .arg("getvcp")
-        .arg(format!("{code:02x}"))
-        .output()?;
+        .arg(format!("{code:02x}")))?;
     let text = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
     parse_get_vcp_reply(code, &text, output.status.success())
@@ -358,7 +380,7 @@ fn set_vcp(display_num: i32, code: u8, value: u16, permit_unknown: bool) -> Resu
     args.push(format!("{code:02x}"));
     args.push(value.to_string());
 
-    let output = Command::new("ddcutil").args(&args).output()?;
+    let output = run(Command::new("ddcutil").args(&args))?;
     if !output.status.success() {
         let out = String::from_utf8_lossy(&output.stdout).into_owned()
             + &String::from_utf8_lossy(&output.stderr);
@@ -373,6 +395,31 @@ fn set_vcp(display_num: i32, code: u8, value: u16, permit_unknown: bool) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- run(): a missing `ddcutil` binary shouldn't leak a raw OS
+    // error into the UI. Real report: a Mac with no external monitor
+    // connected (so the native backend correctly finds nothing and
+    // falls back here) and no `ddcutil` installed showed the user a
+    // bare "Error: No such file or directory (os error 2)" instead of
+    // something they could act on.
+
+    #[test]
+    fn missing_binary_gets_an_actionable_message_not_a_raw_os_error() {
+        let err = run(&mut Command::new("cmmrs-definitely-not-a-real-binary-xyz")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("ddcutil not found"), "got: {msg:?}");
+        assert!(!msg.contains("os error"), "raw OS error leaked through: {msg:?}");
+    }
+
+    #[test]
+    fn other_spawn_failures_still_get_a_message_not_silently_swallowed() {
+        // A path that exists but isn't executable (or otherwise can't be
+        // spawned) is a different failure than "not found" — still
+        // shouldn't panic or vanish, just doesn't get the specific
+        // "not found" wording.
+        let err = run(&mut Command::new("/dev/null")).unwrap_err();
+        assert!(!err.to_string().is_empty());
+    }
 
     // ---- getvcp: samples captured against a real LG 29UM68 via `ddcutil
     // getvcp`, one per output shape the parser has to handle. Ported from
