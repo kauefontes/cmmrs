@@ -1,0 +1,16 @@
+pkgbase = cmmrs
+	pkgdesc = A terminal UI for controlling DDC/CI monitors, vendor-agnostic
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/kauefontes/cmmrs
+	install = cmmrs.install
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = cargo
+	depends = gcc-libs
+	optdepends = ddcutil: fallback DDC/CI backend used when the native /dev/i2c-* backend finds nothing
+	source = cmmrs-0.1.0.crate::https://static.crates.io/crates/cmmrs/cmmrs-0.1.0.crate
+	sha256sums = 10f5ddf8b3e9e84d86d4d6b156a2af9d9778c3bf36661a0e669dfc0b771746cb
+
+pkgname = cmmrs
