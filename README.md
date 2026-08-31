@@ -106,14 +106,18 @@ Since the Go port:
   (`DCPAVServiceProxy`/`IOAVService` on Apple Silicon, the older
   `IOFramebuffer` route on Intel — the same mechanism
   [MonitorControl](https://github.com/MonitorControl/MonitorControl) and
-  `m1ddc` use). **Compiles and passes the full test suite on
-  `macos-latest` CI (Apple Silicon), but is not yet confirmed against a
-  real Mac + external monitor** — no Mac was available to verify it
-  directly while writing it. Treat it as unverified until this note
-  changes; DDC/CI over some USB-C/Thunderbolt docks or cables is known
-  to be inconsistent on Apple Silicon regardless (a limitation
-  MonitorControl documents too, not something this code can route
-  around).
+  `m1ddc` use). Verified against real Apple Silicon hardware (an LG
+  ultrawide): detect, capabilities parse, and reading/setting most
+  controls all check out. One bug found this way: `ddc_macos::Monitor`
+  doesn't apply the DDC/CI spec's mandated inter-command delay the way
+  `ddc_i2c` does on Linux, which raced a write-then-verify-read on
+  Audio Speaker Volume specifically into a malformed reply.
+  `backend::macos` now applies that delay by hand (see `pace()` in that
+  module) — **fixed per the same root-cause analysis that found it, not
+  yet re-confirmed against real hardware.** DDC/CI over some USB-C/
+  Thunderbolt docks or cables is known to be inconsistent on Apple
+  Silicon regardless — a limitation MonitorControl documents too, not
+  something this code can route around.
 
 Both native backends share their capability-database logic
 (`backend::mccs_shared` — feature name/type resolution, the well-known
@@ -128,8 +132,9 @@ if it finds nothing.
 Left to do:
 
 - Other vendors are supported in principle (the model was never
-  LG-specific) but only exercised against one panel so far.
-- Confirming `backend::macos` against real hardware (see above).
+  LG-specific) but only exercised against one panel per platform so far.
+- Re-confirming `backend::macos`'s Audio Speaker Volume fix against
+  real hardware (see above).
 - A Windows native backend (see "Why port this from Go at all").
 
 ## Build & run
@@ -138,7 +143,7 @@ On Linux, needs your user in the `i2c` group so `/dev/i2c-*` is readable
 without `sudo` — the native backend needs that regardless of `ddcutil`.
 On macOS, no special setup should be needed (no entitlement/TCC prompt
 expected for the IOKit calls `backend::macos` makes — see "Porting
-status" for its current unverified-on-real-hardware status, though).
+status" for the one thing still pending re-confirmation there, though).
 `ddcutil` itself only needs to be installed as a fallback, for the case
 where the native backend finds nothing (e.g. permissions, an unsupported
 bus) or on a platform without a native backend yet.
