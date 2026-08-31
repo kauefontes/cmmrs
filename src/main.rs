@@ -62,6 +62,18 @@ fn pick_backend() -> Arc<dyn DdcBackend> {
             Err(e) => log::warn!("native DDC/CI backend unavailable, falling back to ddcutil: {e}"),
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        let native = backend::macos::MacosBackend::new();
+        match native.detect() {
+            Ok(displays) if !displays.is_empty() => {
+                log::info!("using native DDC/CI backend ({} display(s) found)", displays.len());
+                return Arc::new(native);
+            }
+            Ok(_) => log::info!("native DDC/CI backend found no displays, falling back to ddcutil"),
+            Err(e) => log::warn!("native DDC/CI backend unavailable, falling back to ddcutil: {e}"),
+        }
+    }
     log::info!("using ddcutil backend");
     Arc::new(DdcutilBackend::new())
 }
