@@ -3,14 +3,20 @@
 //!
 //! `ddcutil` (see `backend::ddcutil`) was the only implementation at first,
 //! same as the Go original — but nothing above this trait knows that.
-//! `backend::native` is the first native one: Linux, over `/dev/i2c-*`
-//! directly via the `ddc`/`ddc-i2c` crates. Still to come: Windows (the
-//! Monitor Configuration Functions API) and macOS (IOKit, where DDC access
-//! is notoriously limited on Apple Silicon) — each just becomes another
-//! `impl DdcBackend`, selected at runtime, with zero changes to `vcp` or
-//! `tui`.
+//! `backend::native` (Linux, over `/dev/i2c-*` via `ddc`/`ddc-i2c`) and
+//! `backend::macos` (macOS, over IOKit via `ddc-macos`) are native
+//! backends; each is just another `impl DdcBackend`, selected at
+//! runtime by `main::pick_backend`, with zero changes to `vcp` or `tui`.
+//! Still to come: Windows (the Monitor Configuration Functions API). The
+//! two native backends that exist share their capability-database logic
+//! (name/type resolution, the `WELL_KNOWN` fallback table) via
+//! `mccs_shared` rather than each carrying its own copy.
 
 pub mod ddcutil;
+#[cfg(target_os = "macos")]
+pub mod macos;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod mccs_shared;
 #[cfg(target_os = "linux")]
 pub mod native;
 

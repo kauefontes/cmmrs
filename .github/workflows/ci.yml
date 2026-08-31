@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # macos-backend: temporary, while backend::macos has no maintainer
+    # with a Mac able to verify it locally — this is the only place that
+    # can compile-check it before a human tests it for real. Drop once
+    # that lands on main.
+    branches: [main, macos-backend]
   pull_request:
 
 env:
@@ -10,10 +14,17 @@ env:
 
 jobs:
   test:
-    # Linux only for now — the only platform with a native backend (see
-    # backend/native.rs); ddcutil.rs's own tests are pure text-parsing
-    # fixtures and don't need ddcutil actually installed to run.
-    runs-on: ubuntu-latest
+    # ddcutil.rs's own tests are pure text-parsing fixtures and don't
+    # need ddcutil actually installed to run on either platform. Windows
+    # isn't here yet — no backend for it (see backend/mod.rs).
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: macos-latest
+            name: macos
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
