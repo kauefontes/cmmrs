@@ -100,24 +100,45 @@ Since the Go port:
 - **A native Linux backend** (`backend::native`) landed — talks
   `/dev/i2c-*` directly, no `ddcutil` subprocess. Verified against real
   hardware (an LG ultrawide over `/dev/i2c-2`: detect, capabilities parse,
-  and a `getvcp`/brightness read all check out). `main.rs` prefers it and
-  falls back to the `ddcutil` backend automatically. Windows and macOS
-  native backends are still open — see "Why port this from Go at all".
-  `backend::native` has one `#[ignore]`d manual smoke test
-  (`manual_detect_probe`) since there's no hardware in CI to exercise it
-  automatically; run it with `cargo test -- --ignored --nocapture` on a
-  machine with a DDC/CI monitor attached.
+  and a `getvcp`/brightness read all check out).
+- **A native macOS backend** (`backend::macos`) landed — talks IOKit via
+  the [`ddc-macos`](https://github.com/haimgel/ddc-macos-rs) crate
+  (`DCPAVServiceProxy`/`IOAVService` on Apple Silicon, the older
+  `IOFramebuffer` route on Intel — the same mechanism
+  [MonitorControl](https://github.com/MonitorControl/MonitorControl) and
+  `m1ddc` use). **Compiles and passes the full test suite on
+  `macos-latest` CI (Apple Silicon), but is not yet confirmed against a
+  real Mac + external monitor** — no Mac was available to verify it
+  directly while writing it. Treat it as unverified until this note
+  changes; DDC/CI over some USB-C/Thunderbolt docks or cables is known
+  to be inconsistent on Apple Silicon regardless (a limitation
+  MonitorControl documents too, not something this code can route
+  around).
+
+Both native backends share their capability-database logic
+(`backend::mccs_shared` — feature name/type resolution, the well-known
+VCP code fallback table) rather than each carrying a copy, and each has
+one `#[ignore]`d manual smoke test (`manual_detect_probe`) since there's
+no real monitor in CI to exercise either automatically — run one with
+`cargo test -- --ignored --nocapture manual_detect_probe` on a machine
+with a DDC/CI monitor attached. `main.rs` prefers whichever native
+backend matches the current OS and falls back to `ddcutil` automatically
+if it finds nothing.
 
 Left to do:
 
 - Other vendors are supported in principle (the model was never
   LG-specific) but only exercised against one panel so far.
-- Windows and macOS native backends (see "Why port this from Go at all").
+- Confirming `backend::macos` against real hardware (see above).
+- A Windows native backend (see "Why port this from Go at all").
 
 ## Build & run
 
 On Linux, needs your user in the `i2c` group so `/dev/i2c-*` is readable
 without `sudo` — the native backend needs that regardless of `ddcutil`.
+On macOS, no special setup should be needed (no entitlement/TCC prompt
+expected for the IOKit calls `backend::macos` makes — see "Porting
+status" for its current unverified-on-real-hardware status, though).
 `ddcutil` itself only needs to be installed as a fallback, for the case
 where the native backend finds nothing (e.g. permissions, an unsupported
 bus) or on a platform without a native backend yet.

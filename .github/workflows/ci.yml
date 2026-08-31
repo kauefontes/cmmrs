@@ -2,11 +2,7 @@ name: CI
 
 on:
   push:
-    # macos-backend: temporary, while backend::macos has no maintainer
-    # with a Mac able to verify it locally — this is the only place that
-    # can compile-check it before a human tests it for real. Drop once
-    # that lands on main.
-    branches: [main, macos-backend]
+    branches: [main]
   pull_request:
 
 env:
